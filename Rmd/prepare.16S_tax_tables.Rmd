@@ -1,0 +1,94 @@
+---
+title: "Filter 16S Taxa Tables"
+author: "Sebastian Schmidt"
+date: "2018-11-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(stringsAsFactors = FALSE)
+```
+
+## Prepare Environment
+
+Attach relevant packages
+
+```{r}
+library("Matrix", warn.conflicts=F, quietly=T)
+library("ggplot2", warn.conflicts=F, quietly=T)
+library("RColorBrewer", warn.conflicts=F, quietly=T)
+
+source("https://raw.githubusercontent.com/defleury/Toolbox_16S/master/R/function.alpha_diversity.R")
+source("https://raw.githubusercontent.com/defleury/Toolbox_16S/master/R/function.rarefaction.R")
+```
+
+Set parameters.
+
+```{r}
+PARAM <- list()
+PARAM$folder.R <- paste0(getwd(), "/")
+PARAM$folder.base <- gsub("Rmd/", "", PARAM$folder.R)
+PARAM$folder.data <- paste0(PARAM$folder.base, "data/")
+PARAM$folder.metadata <- paste0(PARAM$folder.base, "metadata/")
+PARAM$folder.parameters <- paste0(PARAM$folder.base, "parameters/")
+PARAM$folder.results <- paste0(PARAM$folder.base, "results/")
+
+#Set parameters to filter taxa tables
+PARAM$min.size_sample <- 500
+PARAM$min.prevalence_tax <- 5
+```
+
+## Load Raw Taxa Tables
+
+Read ASV table.
+
+```{r}
+file.asv_table <- paste0(PARAM$folder.data, "all_samples.asv_table.tsv.gz")
+tmp.asv <- as.matrix(read.delim(file.asv_table, sep="\t", header=T, row.names = 1))
+dim(tmp.asv)
+```
+
+Filter by sample sizes and minimum taxa prevalence.
+
+```{r}
+t.asv <- tmp.asv[rowSums(tmp.asv > 0) >= PARAM$min.prevalence_tax, colSums(tmp.asv) >= PARAM$min.size_sample]
+dim(t.asv)
+```
+
+After applying these filters, we retain `r 100 * ncol(t.asv) / ncol(tmp.asv)`% of samples, `r 100 * nrow(t.asv) / nrow(tmp.asv)`% of ASVs and `r 100 * sum(t.asv)/sum(tmp.asv)`% of total reads. Indeed, the removed samples contained just `r 100 * sum(tmp.asv[, colSums(tmp.asv) < PARAM$min.size_sample]) / sum(tmp.asv)`% of total reads.
+
+Get sample sizes, re-scale (by removing samples that retain <80% of the previously set minimum size) and normalise by total sums.
+
+```{r}
+tmp.size <- colSums(t.asv)
+t.asv <- t.asv[, tmp.size >= 0.8*PARAM$min.size_sample]
+size.asv <- colSums(t.asv)
+t.asv.rel <- t(t(t.asv) / size.asv)
+dim(t.asv)
+```
+
+Repeat for open-reference 98% OTU table.
+
+```{r}
+file.otu_table <- paste0(PARAM$folder.data, "all_samples.open_ref.otu_table.tsv.gz")
+tmp.otu <- as.matrix(read.delim(file.otu_table, sep="\t", header=T, row.names = 1))
+dim(tmp.otu)
+```
+```{r}
+#First round of filtering.
+t.otu <- tmp.otu[rowSums(tmp.otu > 0) >= PARAM$min.prevalence_tax, colSums(tmp.otu) >= PARAM$min.size_sample]
+dim(t.otu)
+```
+
+```{r}
+#Second round of filtering
+tmp.size <- colSums(t.otu)
+t.otu <- t.otu[, tmp.size >= 0.8*PARAM$min.size_sample]
+size.otu <- colSums(t.otu)
+t.otu.rel <- t(t(t.otu) / size.otu)
+dim(t.otu)
+```
+
+After applying these filters, we retain `r 100 * ncol(t.otu) / ncol(tmp.otu)`% of samples, `r 100 * nrow(t.otu) / nrow(tmp.otu)`% of OTUs and `r 100 * sum(t.otu)/sum(tmp.otu)`% of total reads. Indeed, the removed samples contained just `r 100 * sum(tmp.otu[, colSums(tmp.otu) < PARAM$min.size_sample]) / sum(tmp.otu)`% of total reads.
+

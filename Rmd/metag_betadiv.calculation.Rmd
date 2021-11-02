@@ -1,0 +1,589 @@
+---
+title: "Community composition analysis of PDAC metaG data"
+output: html_document
+---
+This document outlines the beta diversity analyses on the pancreatic cancer 
+metagenomics data.
+Data contains 100 saliva and 136 stool metagenomics sequencing results. 
+Analyse trends in beta diversity (community composition) between groups:
+# Beta diversity:
+* Jaccard on incidence data (presence/absence only, no abundances/counts)
+* Bray-Curtis on relative abundances
+* Bray-Curtis on sqrt(relative abundances)
+* Euclidean distances on log10(relative abundances)
+* Jaccard weighs by presence/absensce.
+* Bray-Curtis weighs by that plus abundance.
+* TINA weighs by "distance on the interaction network"
+* UniFrac/PINA weigh by "distance on the phylogenetic tree" # todo
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+###############################################################################
+Calculate Community Dissimilarities
+###############################################################################
+
+```{r message= FALSE, warning=FALSE}
+#Source functions for TINA calculations
+source("https://raw.githubusercontent.com/defleury/Schmidt_et_al_2016_community_similarity/master/functions.community_similarity.R")
+#motu table = count.table, calculate beta diversity per site
+library(ggplot2, quietly=T)
+library(edgeR, quietly=T)
+library(car)
+library(vegan)
+library(ape)
+library(dplyr)
+library(plyr)
+library(readxl)
+library(reshape2)
+library(stringr)
+
+# Set parameters
+PARAM <- list()
+PARAM$folder.R <- paste0(getwd(), "/")
+PARAM$folder <- gsub("Rmd/", "", PARAM$folder.R)
+PARAM$folder.files <- paste0(PARAM$folder, "files/")
+PARAM$folder.Rdata <- paste0(PARAM$folder, "Rdata/")
+PARAM$folder.data <- paste0(PARAM$folder, "data/")
+PARAM$folder.results <- paste0(PARAM$folder, "results")
+
+load(paste0(PARAM$folder.Rdata, "metag.pc.Rdata"))
+dim(motu.abs.3mg)
+# filter
+motu <- motu.abs.3mg[rowSums(motu.abs.3mg > 0) >= 3, colSums(motu.abs.3mg) >= 500]
+# split
+feat.total.3mg.st <- motu[,rownames(meta.st) ]
+feat.total.3mg.or <- motu[, which(colnames(motu) %in%  rownames(meta.or))] 
+feat.total.3mg.st.rel <- prop.table(as.matrix(feat.total.3mg.st), 2)
+feat.total.3mg.or.rel <- prop.table(as.matrix(feat.total.3mg.or), 2)
+# metadata
+meta.st <- meta.st[colnames(feat.total.3mg.st), ]
+meta.or <- meta.or[colnames(feat.total.3mg.or), ] # choose complete cases
+
+feat.abs=cbind(feat.total.3mg.st, feat.total.3mg.or)
+dim(feat.abs)
+```
+
+###############################################################################
+* are there significant community-level compositional shifts between controls, 
+PDAC cases and pancreatitis cases?
+* do trends differ between the salivary and stool samples?
+
+To approach these questions, the following analyses steps are performed:
+* calculate pairwise sample compositional (dis)similarities according to various 
+beta div indices
+###############################################################################
+
+```{r}
+cal.betadiv <- function(featTable, fileName){
+  core = 4
+  # First, pre-allocate a results collector list.
+  beta.div <- list()
+  # Calculate Bray-Curtis dissimilarities on non-transformed data.
+  # Bray-Curtis
+  beta.div[["Bray_Curtis"]] <- community.similarity.par(featTable, 
+                                                        distance="bray_curtis", 
+                                                        use.cores=core)
+  
+  # Calculate Bray-Curtis dissimilarities on sqrt-transformed data.
+  beta.div[["Bray_Curtis.sqrt"]] <- community.similarity.par(sqrt(featTable), 
+                                                             distance="bray_curtis", 
+                                                             use.cores=core)
+  # Calculate the abundance-weighted Jaccard dissimilarities
+  # Weighted Jaccard
+  beta.div[["Jaccard_w"]] <- community.similarity.par(featTable, 
+                                                      distance="jaccard.abd.frac", 
+                                                      use.cores=core)
+  # Get pairwise (raw) SparCC correlations and derived "interaction matrix"
+  motu.sparcc <- sparcc(featTable, size.thresh=0, pseudocount=10^-6, nblocks=4, use.cores=core)
+  motu.sparcc.S <- 0.5 * (cor(motu.sparcc) + 1)
+  
+  # Unweighted TINA
+  beta.div[["TINA_uw"]] <- community.similarity.corr.par(featTable, S=motu.sparcc.S, 
+                                                         distance="jaccard.corr.uw.norm", 
+                                                         blocksize=10, 
+                                                         use.cores=core)
+  beta.div[["TINA_uw"]][beta.div[["TINA_uw"]] < 0] <- 0
+  rownames(beta.div[["TINA_uw"]]) <- colnames(beta.div[["TINA_uw"]]) <- colnames(featTable)
+  
+  # Weighted TINA
+  beta.div[["TINA_w"]] <- community.similarity.corr.par(featTable, S=motu.sparcc.S, 
+                                                        distance="jaccard.corr.w.norm", 
+                                                        blocksize=10, 
+                                                        use.cores=core)
+  beta.div[["TINA_w"]][beta.div[["TINA_w"]] < 0] <- 0
+  rownames(beta.div[["TINA_w"]]) <- colnames(beta.div[["TINA_w"]]) <- colnames(featTable)
+
+  # save data
+  save(motu.sparcc.S,motu.sparcc,
+       file = paste0(PARAM$folder.Rdata, fileName, "mOTU.sparcc.Rdata"))
+  save(featTable, beta.div,
+       file = paste0(PARAM$folder.Rdata, fileName, "metag.betadiv.Rdata"))
+  return(beta.div)
+}
+
+betadiv.stool = cal.betadiv(feat.total.3mg.st.rel,"st.3mg.rel.")
+betadiv.saliva = cal.betadiv(feat.total.3mg.or.rel, "or.3mg.rel.")
+```
+
+```{r}
+# convert to distance matrix the beta.div file
+dist.betadiv.stool <- lapply(betadiv.stool, as.dist)
+dist.betadiv.saliva <- lapply(betadiv.saliva, as.dist)
+
+# Perform some data quality checks and data transformations needed to run the analyses
+names(betadiv.stool)
+dim(betadiv.stool[[1]])
+dim(betadiv.saliva[[2]])
+names(betadiv.saliva)
+
+# check if ids are identical 
+identical(rownames(as.matrix(betadiv.stool[["Bray_Curtis"]])), 
+          rownames(as.matrix(betadiv.stool[["Jaccard_w"]])))#needs to be true
+identical(rownames(as.matrix(betadiv.saliva[["Bray_Curtis"]])), 
+          rownames(as.matrix(betadiv.saliva[["Jaccard_w"]]))) #needs to be true
+```
+
+###############################################################################
+* perform ordination analyses (Principal Coordinate Analysis, PCoA) for 
+exploration and visualization
+###############################################################################
+
+```{r pcoa function, echo=TRUE}
+pco.analysis <- function(analysisName, type, siteName) {
+    root.dir <- PARAM$folder.results
+    analysisName =  c("Bray", "Bray.sqrt", "Jaccard_w", "TINA_uw", "TINA_w")
+    data_analysisName <- dist.betadivEleg[[type]]
+    # check the order of sample id 
+    identical(rownames(as.matrix(data_analysisName)), as.character(rownames(div.dataEleg)))
+    # pcoa analysis
+    
+    pcoa_analysisName <- pcoa(data_analysisName, rn=rownames(dist.betadivEleg))
+    curr.pcoa <- pcoa_analysisName
+    # Prepare data for plotting
+    plot.data <- data.frame(div.dataEleg, 
+                            Axis.1=curr.pcoa$vectors[, "Axis.1"], 
+                            Axis.2=curr.pcoa$vectors[, "Axis.2"], 
+                            Group=interaction(div.dataEleg$status))
+    # Get percent variation explained
+    if (curr.pcoa$correction[1] == "none") {
+    plot.var_explained <- round(100*curr.pcoa$values[1:2, "Relative_eig"]/
+                                  sum(curr.pcoa$values[, "Relative_eig"]), digits=1)
+    } else {
+    plot.var_explained <- round(100*curr.pcoa$values[1:2, "Rel_corr_eig"]/
+                                  sum(curr.pcoa$values[, "Rel_corr_eig"]), digits=1)
+    }
+    # Get convex hulls around points
+    plot.hulls <- ddply(plot.data, "Group", 
+                        function(df) df[chull(df$Axis.1, df$Axis.2), ])
+    # Get centroids
+    plot.centroids <- ddply(plot.data, "Group", 
+                            function(df) c(mean(df$Axis.1), mean(df$Axis.2)))
+    curr.plot.df <- merge(plot.data, plot.centroids, by="Group")
+    
+        # Plot ordination
+        curr.plot <- ggplot(curr.plot.df, aes_string(x="Axis.1", y="Axis.2", colour="Group")) +
+        # Add group centroids
+        geom_point(data=curr.plot.df, aes(x=V1, y=V2, color=Group),  shape=15, size=8, alpha=0.6) +
+        # Add segments of points to centroids
+        geom_segment(data=curr.plot.df, aes(x=Axis.1, y=Axis.2, xend=V1, yend=V2), alpha=0.6) +
+        # Add points (per sample)
+        #geom_point(aes(color = curr.plot.df$status), size = 4) +
+        geom_point(size=3, alpha=0.6) +
+
+        # set color
+        scale_color_manual(values=c("#0571b0","#f4a582","#ca0020"))+
+        # Add ellipses (at 95%)
+        stat_ellipse(level=0.95, segments=101, alpha=0.5) +
+        # Add convex hull around all points per group
+        geom_polygon(data = plot.hulls, aes(fill=Group), color=NA, alpha = 0.1) +
+        
+        # Add x & y axis labels
+        xlab(paste("Axis 1 [", plot.var_explained[1], "%]", sep="")) +
+        ylab(paste("Axis 2 [", plot.var_explained[2], "%]", sep="")) +
+        # add title
+        ggtitle(list(title = paste0(type, ' ', siteName, " PCoA Analysis"))) +
+        theme(plot.title = element_text(size=20)) +
+        theme_classic()
+        # save the plot
+        ggsave(filename=paste0(root.dir, type,' ', siteName, " PCoA Analysis.pdf"), plot=curr.plot) 
+}
+```
+
+```{r, echo=TRUE}
+# stool
+data.sample <- meta.st
+rownames(data.sample) <- as.character(rownames(data.sample))
+dist.betadivEleg = lapply(dist.betadiv.stool, function(x) 
+  {as.dist(as.matrix(x)[rownames(data.sample), rownames(data.sample)])}) 
+# herewith we extract from the list all distance pairs of eligible cases and controls
+div.dataEleg = meta.st
+# run the function
+pco.analysis(Bray, "Bray_Curtis", "Stool")
+pco.analysis(Jaccard_w, "Jaccard_w", "Stool")
+pco.analysis(Bray.sqrt, "Bray_Curtis.sqrt", 'Stool')
+pco.analysis(TINA_uw, "TINA_uw", "Stool")
+pco.analysis(TINA_w, "TINA_w", 'Stool')
+
+# oral
+data.sample <- meta.or
+rownames(data.sample) <- as.character(rownames(data.sample))
+dist.betadivEleg = lapply(dist.betadiv.saliva, function(x) 
+  {as.dist(as.matrix(x)[rownames(data.sample), rownames(data.sample)])}) 
+# herewith we extract from the list all distance pairs of eligible cases and controls
+div.dataEleg = meta.or
+# run the function
+pco.analysis(Bray, "Bray_Curtis", "Saliva")
+pco.analysis(Jaccard_w, "Jaccard_w", "Saliva")
+pco.analysis(Bray.sqrt, "Bray_Curtis.sqrt", 'Saliva')
+pco.analysis(TINA_uw, "TINA_uw", "Saliva")
+pco.analysis(TINA_w, "TINA_w", "Saliva")
+```
+
+###############################################################################
+Test shifts in community composition for statistical significance (using PERMANOVA)
+###############################################################################
+
+```{r extract betadiv objects}
+load(paste0(PARAM$folder.Rdata, "metag.alphadiv.Rdata"))
+load(paste0(PARAM$folder.Rdata, "metag.pc.metadata.imputed.Rdata"))
+meta.st.imp= as.data.frame(rownames(meta.st))
+meta.st.imp = merge(meta.st.imp, metag.imputed, 
+                    by.x = "rownames(meta.st)", 
+                    by.y = "sample_alias", 
+                    all.x=TRUE)
+
+meta.or.imp= as.data.frame(rownames(meta.or))
+meta.or.imp = merge(meta.or.imp, metag.imputed, 
+                    by.x = "rownames(meta.or)", 
+                    by.y = "sample_alias", 
+                    all.x=TRUE)
+rownames(meta.st.imp) <- meta.st.imp$`rownames(meta.st)`
+rownames(meta.or.imp) <- meta.or.imp$`rownames(meta.or)`
+
+# parsed with column specification:
+meta.st.imp$Richness <- Hill$Richness[match(rownames(meta.st.imp), Hill$Sample)]
+meta.st.imp$Shannon <- Hill$`exp(Shannon)`[match(rownames(meta.st.imp), Hill$Sample)]
+meta.st.imp$Simpson <- Hill$`inv(Simpson)`[match(rownames(meta.st.imp), Hill$Sample)]
+
+meta.or.imp$Richness <- Hill$Richness[match(rownames(meta.or.imp), Hill$Sample)]
+meta.or.imp$Shannon <- Hill$`exp(Shannon)`[match(rownames(meta.or.imp), Hill$Sample)]
+meta.or.imp$Simpson <- Hill$`inv(Simpson)`[match(rownames(meta.or.imp), Hill$Sample)]
+# choose samples by Richness value calculated
+meta.st.imp=meta.st.imp[complete.cases(meta.st.imp[63]),]
+meta.or.imp=meta.or.imp[complete.cases(meta.or.imp[63]),]
+
+################################################################################
+# saliva betadiv
+curr.samples <- rownames(meta.or.imp)
+
+Bray.OR <- as.matrix(dist.betadiv.saliva[["Bray_Curtis"]])[curr.samples, curr.samples]
+Bray.sqrt.OR <- as.matrix(dist.betadiv.saliva[["Bray_Curtis.sqrt"]])[curr.samples, curr.samples]
+Jaccard.w.OR <- as.matrix(dist.betadiv.saliva[["Jaccard_w"]])[curr.samples, curr.samples]
+TINA.w.OR <- as.matrix(dist.betadiv.saliva[["TINA_w"]])[curr.samples, curr.samples]
+TINA.uw.OR <- as.matrix(dist.betadiv.saliva[["TINA_uw"]])[curr.samples, curr.samples]
+
+# stool betadiv
+curr.samples <- rownames(meta.st.imp)
+
+Bray.ST <- as.matrix(dist.betadiv.stool[["Bray_Curtis"]])[curr.samples, curr.samples]
+Bray.sqrt.ST <- as.matrix(dist.betadiv.stool[["Bray_Curtis.sqrt"]])[curr.samples, curr.samples]
+Jaccard.w.ST <- as.matrix(dist.betadiv.stool[["Jaccard_w"]])[curr.samples, curr.samples]
+Jaccard.w.ST <- as.matrix(dist.betadiv.stool[["Jaccard_w"]])[curr.samples, curr.samples]
+TINA.w.ST <- as.matrix(dist.betadiv.stool[["TINA_w"]])[curr.samples, curr.samples]
+TINA.uw.ST <- as.matrix(dist.betadiv.stool[["TINA_uw"]])[curr.samples, curr.samples]
+```
+
+
+```{r prepare betadiv files/measurement, echo=TRUE}
+mylist =  c("Bray_Curtis", "Bray_Curtis.sqrt", "Jaccard_w", "TINA_uw", "TINA_w")
+
+split.index <- function(mylist, meta, subject_disease_status){
+  Bray <- as.dist(as.matrix(mylist[[1]])[meta$subject_disease_status!= subject_disease_status,
+                                         meta$subject_disease_status!= subject_disease_status])
+  Bray.sqrt <- as.dist(as.matrix(mylist[[2]])[meta$subject_disease_status!= subject_disease_status,
+                                              meta$subject_disease_status!= subject_disease_status])
+  Jaccard <- as.dist(as.matrix(mylist[[3]])[meta$subject_disease_status!= subject_disease_status,
+                                            meta$subject_disease_status!= subject_disease_status])
+  TINA.uw <- as.dist(as.matrix(mylist[[4]])[meta$subject_disease_status!= subject_disease_status, 
+                                            meta$subject_disease_status!= subject_disease_status])
+  TINA.w <- as.dist(as.matrix(mylist[[5]])[meta$subject_disease_status!= subject_disease_status, 
+                                           meta$subject_disease_status!= subject_disease_status])
+  
+  # create a list
+  return(list(a=Bray, b=Bray.sqrt, c=Jaccard, d=TINA.uw, e=TINA.w))
+}
+
+split.index.run.ST <- function(subject_disease_status){
+  for (i in subject_disease_status)(
+      data_status = split.index(
+        list(Bray = Bray.ST, 
+           Bray.sqrt = Bray.sqrt.ST, 
+           Jaccard.w = Jaccard.w.ST,
+           TINA.uw = TINA.uw.ST, 
+           TINA.w = TINA.w.ST),
+      subject_disease_status=i,
+      meta=meta.st.imp))
+  return(data_status)
+}
+
+# run the function to get the lists per combination
+mylist.WOC.ST = split.index.run.ST(" cancer")
+mylist.WOPC.ST = split.index.run.ST(" pancreatitis")
+mylist.WOCNT.ST = split.index.run.ST(" control")
+
+split.index.run.OR <- function(subject_disease_status){
+  for (i in subject_disease_status)(
+      data_status= split.index(
+        list(Bray = Bray.OR, 
+           Bray.sqrt = Bray.sqrt.OR, 
+           Jaccard.w = Jaccard.w.OR, 
+           TINA.uw = TINA.uw.OR, 
+           TINA.w = TINA.w.OR), 
+      subject_disease_status=i,
+      meta=meta.or.imp))
+  return(data_status)
+}
+# run the function to get the lists per combination
+mylist.WOC.OR = split.index.run.OR(" cancer")
+mylist.WOPC.OR = split.index.run.OR(" pancreatitis")
+mylist.WOCNT.OR = split.index.run.OR(" control")
+
+# prepare total stoll and saliva list
+mylist.OR = list(a=Bray.OR, b=Bray.sqrt.OR, c=Jaccard.w.OR, d=TINA.uw.OR, e=TINA.w.OR)
+mylist.ST = list(a=Bray.ST, b=Bray.sqrt.ST, c=Jaccard.w.ST, d=TINA.uw.ST, e=TINA.w.ST)
+
+meta.or.imp.cancer = meta.or.imp %>% filter(subject_disease_status!=" pancreatitis")
+meta.st.imp.cancer = meta.st.imp %>% filter(subject_disease_status!=" pancreatitis")
+meta.st.imp.pc.cancer = meta.st.imp %>% filter(subject_disease_status!=" control")
+meta.or.imp.pc.cancer = meta.or.imp %>% filter(subject_disease_status!=" control")
+meta.or.imp.pc = meta.or.imp %>% filter(subject_disease_status!=" cancer")
+meta.st.imp.pc = meta.st.imp %>% filter(subject_disease_status!=" cancer")
+```
+
+###############################################################################
+adonis2: tests homogeneity of dispersion among groups 
+Groups in pcoa at a very similar position in the ordination space, but if their 
+dispersions are quite different, adonis will give you a significant p-value, 
+thus, the result is heavily influenced not by the difference in composition 
+between groups but by differences in composition within groups
+###############################################################################
+
+```{r perform permonova, echo=TRUE}
+#function to calculate "R-squared" and "p-value"
+# use continuous variables or factors
+# vegan doesnt accept NA values yet, imputed variables are used
+
+df.adonis <- df.dbRDA <- data.frame()
+
+pvalueCalculation <- function(listName, metaName){
+  # add all possible cofounders
+  ado2 <- lapply(listName, function(x) adonis2(x ~ subject_disease_status + Center + age_years +
+                                                   gender + Jaundice_imp + alldiab + smoker +
+                                                   alcohol_status + metformin.ever, 
+                                                   salicylic.ever + antibiotic +
+                                                   asparmed + cortmed + asthma + allacid + allrheum +
+                                                   probiot + paracetamol.ever + allhburn + allhbp +
+                                                   recession + FHPDAC + abmedication ,
+                          data=metaName, permutations=9999, by="terms"))
+  
+  
+  df.adonis <- rbind(df.adonis, data.frame(
+    factor = c("status", "center", "age", "gender","jaundice_imp", "diabetes", 
+                "smoking", "alcohol_con", "metformin"),
+    R2_Bray = ado2$a$R2[1:9], 
+    p_Bray = ado2$a$`Pr(>F)`[1:9],
+    R2_Brays = ado2$b$R2[1:9], 
+    p_Braysqrt = ado2$b$`Pr(>F)`[1:9],
+    R2_Jacard = ado2$c$R2[1:9],
+    p_Jacard = ado2$c$`Pr(>F)`[1:9]
+  ))
+  
+  dbRDA <- lapply(listName, function(x) dbrda(x ~ subject_disease_status + Center + age_years +
+                                                  gender + Jaundice_imp + alldiab + smoker +
+                                                  alcohol_status + metformin.ever + Richness + Shannon + Simpson,
+                                                  metformin.ever + salicylic.ever + antibiotic +
+                                                  asparmed + cortmed + asthma + allacid + allrheum +
+                                                  probiot + paracetamol.ever + allhburn + allhbp +
+                                                  recession + FHPDAC + abmedication + Richness + Shannon + Simpson,
+                          data=metaName, permutations=9999, by="terms"))
+  
+  aov.dbRDA <- lapply(dbRDA, function(x) anova(x, by="terms"))                          
+  
+  df.dbRDA <- rbind(df.dbRDA, data.frame(
+    factor = c("status", "center", "age", "gender","jaundice_imp", "diabetes", 
+                "smoking", "alcohol_con", "metformin", "Richness", "exp(Shannon)", "inv(Simpson)"),
+               "salicylic", "antibiotic", "aspirin/paracetamol", "corticosteroids",
+               "asthma", "acid regurgitation", "rheumatoid arthritis", "probiotic",
+               "paracetamol", "heartburn", "high blood pressure", "receding gums",
+               "FHPDAC", "acid med", "Richness", "exp(Shannon)", "inv(Simpson)"),
+    R2_Bray = aov.dbRDA$a$SumOfSqs[1:12] / sum(aov.dbRDA$a$SumOfSqs), 
+    p_Bray = aov.dbRDA$a$`Pr(>F)`[1:12],
+    R2_Brays = aov.dbRDA$b$SumOfSqs[1:12] / sum(aov.dbRDA$b$SumOfSqs),
+    p_Braysqrt = aov.dbRDA$b$`Pr(>F)`[1:12],
+    R2_Jacard = aov.dbRDA$c$SumOfSqs[1:12] / sum(aov.dbRDA$c$SumOfSqs),
+    p_Jacard = aov.dbRDA$c$`Pr(>F)`[1:12]
+  )
+  return(list(ado2=ado2, df.adonis=df.adonis,dbRDA=dbRDA, aov.dbRDA=aov.dbRDA, df.dbRDA=df.dbRDA))
+}
+
+# run adonis2
+saliva.adonis2.total <- pvalueCalculation(mylist.OR, meta.or.imp)
+saliva.adonis2.wopc <-pvalueCalculation(mylist.WOPC.OR, meta.or.imp.cancer)
+saliva.adonis2.woctr <-pvalueCalculation(mylist.WOCNT.OR, meta.or.imp.pc.cancer)
+saliva.adonis2.woc <-pvalueCalculation(mylist.WOC.OR, meta.or.imp.pc)
+
+stool.adonis2.total <- pvalueCalculation(mylist.ST, meta.st.imp)
+stool.adonis2.wopc <- pvalueCalculation(mylist.WOPC.ST, meta.st.imp.cancer)
+stool.adonis2.woctr <- pvalueCalculation(mylist.WOCNT.ST, meta.st.imp.pc.cancer)
+stool.adonis2.woc <- pvalueCalculation(mylist.WOC.ST, meta.st.imp.pc)
+
+# save adonis
+save(mylist.ST, mylist.WOPC.ST, mylist.WOCNT.ST, mylist.WOC.ST, mylist.OR,
+     mylist.WOPC.OR, mylist.WOCNT.OR, mylist.WOC.OR, stool.adonis2.total,
+     stool.adonis2.wopc,stool.adonis2.woctr, stool.adonis2.woc, saliva.adonis2.total,
+     saliva.adonis2.wopc, saliva.adonis2.woctr, saliva.adonis2.woc,
+       file = paste0(PARAM$folder.Rdata, "metag.adonis2.Rdata"))
+```
+
+###############################################################################
+Integrate alpha diversity data with remaining metadata.
+###############################################################################
+
+```{r}
+Hill %>% select(Sample, Richness, `exp(Shannon)`, `inv(Simpson)`) %>% 
+  transmute(Sample = Sample, Richness = Richness, ExpShannon=`exp(Shannon)`, 
+            InvSimpson=`inv(Simpson)`) -> Hill.filtered
+
+meta.or.imp %>% left_join(Hill.filtered, by = c("rownames(meta.or)" = "Sample")) %>% 
+  drop_na(Richness) -> meta.or.imp
+rownames(meta.or.imp) <- meta.or.imp$`rownames(meta.or)`
+
+meta.st.imp %>% left_join(Hill.filtered, by = c("rownames(meta.st)" = "Sample")) %>% 
+  drop_na(Richness) -> meta.st.imp
+rownames(meta.st.imp) <- meta.st.imp$`rownames(meta.st)`
+```
+
+###############################################################################
+Define a function to perform dbRDA analyses.
+###############################################################################
+
+```{r, fig.width=10, fig.height=10}
+# plot all confounders on the plot
+plot.rda.confounder <- function(betadiv, betadiv_metric, meta){
+  curr.dist <- as.dist(betadiv[[betadiv_metric]][rownames(meta), rownames(meta)])
+  
+  #Make sure that data is sorted in the correct order
+  #meta <- meta[rownames(betadiv[[betadiv_metric]]), ]
+  
+  #Build formula for current dbRDA
+  curr.terms <- character()
+  #Add terms sequentially to model
+  for (var in c("Center", "age_years","gender", "smoker","Jaundice_imp", 
+                "metformin.ever", "alldiab","obese", "asthma", "recession", 
+                "Richness", "ExpShannon", "InvSimpson","subject_disease_status")) {
+    if (length(unique(meta[, var])) > 1) {curr.terms <- c(curr.terms, var)}
+  }
+  my.terms <- paste(curr.terms, collapse =  " + ")
+  curr.formula <- paste("curr.dist ~ ", my.terms)
+  
+  #Perform dbRDA
+  curr.dbrda <- dbrda(as.formula(curr.formula), data=meta, by="terms", permutations = 9999)
+  
+  #Perform ANOVA on dbRDA
+  curr.aov <- anova(curr.dbrda, by="terms", permutations = 9999)
+  curr.aov$R2 <- curr.aov$SumOfSqs / sum(curr.aov$SumOfSqs)
+  curr.aov.tidy <- tidy(curr.aov) %>% select(term, SumOfSqs, statistic, p.value, R2)
+  
+  #Collect dbRDA data for (later) plotting
+  curr.eigen <- summary(eigenvals(curr.dbrda))
+  curr.plot <- plot(curr.dbrda, display=c("cn", "wa"))
+  #Store biplot vectors
+  curr.biplot <- data.frame(
+    diagnosis = "all",
+    covariate = rownames(curr.plot$biplot),
+    dbRDA1 = curr.plot$biplot[,1],
+    dbRDA2 = curr.plot$biplot[,2]
+  )
+  
+  #Store biplot group centroids
+  curr.centroids <- data.frame(
+    diagnosis = "all",
+    covariate = c("cancer", "control", "pancreatitis", rownames(curr.plot$biplot)),
+    dbRDA1 = c(curr.plot$centroids[,1], curr.plot$biplot[,1]),
+    dbRDA2 = c(curr.plot$centroids[,2], curr.plot$biplot[,2])
+  )
+  
+  #Get current sample coordinates
+  curr.coord <- data.frame(
+    diagnosis = meta$subject_disease_status,
+    dbRDA1 = curr.plot$sites[,1],
+    dbRDA2 = curr.plot$sites[,2]
+  )
+  
+  #Get convex hulls around points
+  plot.hulls <- plyr::ddply(curr.coord, "diagnosis", 
+                      function(df) df[chull(df$dbRDA1, df$dbRDA2), ])
+  #Get centroids
+  plot.centroids <- plyr::ddply(curr.coord, "diagnosis", 
+                          function(df) c(mean(df$dbRDA1), mean(df$dbRDA2)))
+  
+  #Merge
+  curr.plot.df <- merge(curr.coord, plot.centroids, by="diagnosis")
+  
+  #Generate current dbRDA plot
+  p.dbRDA <- ggplot(curr.plot.df, aes(x=dbRDA1, y=dbRDA2, colour=diagnosis)) +
+    #Add indicator of 0-lines
+    geom_hline(yintercept = 0, alpha=0.4) +
+    geom_vline(xintercept = 0, alpha=0.4) +
+    #Add points (per sample)
+    geom_point(size=8, alpha=0.9) +
+    #Add convex hull around all points per group
+    geom_polygon(data = plot.hulls, aes(fill=diagnosis), color=NA, alpha = 0.2) +
+    #Add biplot vectors (in dark grey)
+    geom_segment(data=curr.biplot, aes(x=dbRDA1, y=dbRDA2, xend=0, yend=0), 
+                 colour="#525252") +
+    #Add biplot centroids
+    #Add biplot centroid labels
+    geom_label(data=curr.centroids, aes(label=covariate), colour="#525252", 
+               fill="#f0f0f0", alpha=1, size=10) +
+    #Add x & y axis labels
+    xlab(paste("dbRDA1 [", round(100 * curr.eigen[2,1], digits=2), "%]", sep="")) +
+    ylab(paste("dbRDA2 [", round(100 * curr.eigen[2,2], digits=2), "%]", sep="")) +
+    #Scale fill and colour
+    scale_color_manual(values=c("#ca0020", "#0571b0","#f4a582")) +
+    scale_fill_manual(values=c("#ca0020", "#0571b0","#f4a582")) +
+    #Set overall plot theme
+    theme_minimal() +
+    #Amend plot theme
+    theme(
+      legend.position = "none"
+    )
+  return(list(plot = p.dbRDA, anova=curr.aov.tidy))
+}
+```
+
+###############################################################################
+Perform dbRDA analyses.
+###############################################################################
+
+```{r}
+dbRDA.stool.BC <- plot.rda.confounder(betadiv.stool, "Bray_Curtis", meta.st.imp)
+ggsave(dbRDA.stool.BC$plot, 
+       filename = paste0(PARAM$folder.results, "/dbrda.stool.bray_curtis.plot.pdf"), 
+       width = 15, height = 15, useDingbats = F)
+write_tsv(dbRDA.stool.BC$anova, 
+          path = paste0(PARAM$folder.results, "/dbrda.stool.bray_curtis.table.tsv"))
+
+dbRDA.saliva.BC <- plot.rda.confounder(betadiv.saliva, "Bray_Curtis", meta.or.imp)
+ggsave(dbRDA.saliva.BC$plot, 
+       filename = paste0(PARAM$folder.results, "/dbrda.saliva.bray_curtis.plot.pdf"), 
+       width = 15, height = 15, useDingbats = F)
+write_tsv(dbRDA.saliva.BC$anova, 
+          path = paste0(PARAM$folder.results, "/dbrda.saliva.bray_curtis.table.tsv"))
+```
+
+```{r session_info}
+sessionInfo()
+```

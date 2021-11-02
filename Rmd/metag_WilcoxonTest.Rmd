@@ -1,0 +1,164 @@
+---
+title: "Wilcoxon test for PDAC dataset"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load the libraries, echo=FALSE, include=FALSE}
+library(car)
+library(readr)
+library(ggplot2)
+library(pROC)
+library(ggrepel)
+library(tidyverse)
+library(EnhancedVolcano)
+
+PARAM <- list()
+PARAM$folder.R <- paste0(getwd(), "/")
+PARAM$folder <- gsub("Rmd/", "", PARAM$folder.R)
+PARAM$folder.metadata <- paste0(PARAM$folder, "metadata/")
+PARAM$folder.files <- paste0(PARAM$folder, "files/")
+PARAM$folder.Rdata <- paste0(PARAM$folder, "Rdata/")
+PARAM$folder.data <- paste0(PARAM$folder, "data/")
+PARAM$folder.results <- paste0(PARAM$folder, "results/")
+
+# load data
+# preprocess confounder variables to test later
+load(paste0(PARAM$folder.Rdata, "metag.pc.Rdata"))
+load(paste0(PARAM$folder.Rdata, "pc.or.naive.Rdata"))
+sc.or=siamcat
+load(paste0(PARAM$folder.Rdata, "pc.st.naive.RData"))
+sc.st=siamcat
+taxanomy <- read.csv(paste0(PARAM$folder.data,"taxanomy.specI.motu.csv"))
+taxanomy$ref_mOTU_cluster<- str_replace_all(taxanomy$ref_mOTU_cluster, 
+                                    c("ef_mOTU_v25" = "", 
+                                      "incertae sedis" = "", 
+                                      "eta_mOTU_v25" = ""))
+log.n0 = 1e-05 #species
+log.n0.func = 1e-08 #functions
+```
+
+###############################################################################
+Calculate differentailly abundant taxa with Wilcox test
+###############################################################################
+
+```{r}
+# calculate p.val & p.adj
+calWilcox <- function(featTable, metaTable, fileName){
+  # prepare matrix
+  #featTable <- featTable[which(rowSums(featTable >= 1e-05) >= 3), ]
+  featTable <- featTable[!rownames(featTable)=="-1", , drop = FALSE]
+
+  df = featTable[, rownames(metaTable)]
+  metaTable$ID = rownames(metaTable)
+  p.val <- matrix(NA, nrow=nrow(featTable), ncol=1, 
+                dimnames=list(row.names(featTable)))
+  fc <- p.val
+  aucs.mat <- p.val
+  aucs.all  <- vector('list', nrow(featTable))
+  ##############################################################################
+  # calculate wilcoxon test and effect size for each feature
+  for (f in row.names(featTable)) {
+    
+    x <- as.numeric(featTable[f, metaTable %>% filter(status=='PC') %>% pull(ID)])
+    y <- as.numeric(featTable[f, metaTable %>% filter(status=='CTR') %>% pull(ID)])
+    
+    # Wilcoxon
+    p.val[f,1] <- wilcox.test(x, y, exact=FALSE)$p.value
+    
+    # AUC
+    aucs.all[[f]][[1]]  <- c(roc(controls=y, cases=x, 
+                                direction='<', ci=TRUE, auc=TRUE)$ci)
+    aucs.mat[f,1] <- c(roc(controls=y, cases=x, 
+                           direction='<', ci=TRUE, auc=TRUE)$ci)[2]
+    
+    # FC
+    q.p <- quantile(log10(x+log.n0), probs=seq(.1, .9, .05))
+    q.n <- quantile(log10(y+log.n0), probs=seq(.1, .9, .05))
+    fc[f,1] <- sum(q.p - q.n)/length(q.p)
+  }
+  ##############################################################################
+  # fdr correction
+  p.adj <- data.frame(apply(p.val, MARGIN=2, FUN=p.adjust, method="fdr"),
+                    check.names = FALSE)
+  colnames(p.adj) <- "adj"
+  
+  # add fc and auc
+  p.adj$p.val <- p.val
+  p.adj$fc <- fc
+  p.adj$auc.mat <- aucs.mat
+  p.adj$log10p = -log10(as.numeric(p.adj$adj))
+  p.adj <- as.data.frame(p.adj)
+  rownames(p.adj) <- make.names(rownames(df), unique=TRUE)
+  #print(head(p.adj))
+  p.adj <- p.adj %>% na.omit(p.adj)
+  p.adj$significant <- ifelse(p.adj$adj < 0.05, "p.adj < 0.05", "not sig")
+  p.adj$species <-rownames(p.adj)
+  # save file
+   write.table(p.adj, file=paste0(PARAM$folder.results, fileName, 'p.adj.tsv'), 
+                 sep='\t', quote=FALSE, row.names=TRUE, col.names=TRUE)
+  return(p.adj)
+}
+```
+
+```{r}
+# fecal
+feat.st.rel.cancer.3mg <- sc.st@filt_feat$filt.feat
+meta.st.cancer <- meta.st.cancer[colnames(feat.st.rel.cancer.3mg), ]
+dim(feat.st.rel.cancer.3mg)
+# calculate wilcoxon
+st.cancer.3mg <- calWilcox(feat.st.rel.cancer.3mg, meta.st.cancer, "st.cancer.3mg.")
+st.cancer.3mg$sc.fc<- sc.st@associations$assoc.results$fc
+
+# oral 
+feat.or.rel.cancer.3mg <- sc.or@filt_feat$filt.feat
+dim(feat.or.rel.cancer.3mg)
+meta.or.cancer <- meta.or.cancer[colnames(feat.or.rel.cancer.3mg), ] 
+# calculate wilcoxon
+or.cancer.3mg <- calWilcox(feat.or.rel.cancer.3mg, meta.or.cancer, "or.cancer.3mg.")
+or.cancer.3mg$sc.fc<- sc.or@associations$assoc.results$fc
+```
+
+```{r}
+# Volcano plot significant features
+ plot.volcano <- function(p.adj.df, plot.name){
+  p <- ggplot(p.adj.df, aes(x = sc.fc, y = log10p)) +
+    geom_point(aes(size=rel, color = significant), alpha=0.5) +
+    scale_color_manual(values = c("black","red")) +
+    theme_bw(base_size = 20) +
+    geom_hline(yintercept=-log10(0.05))+
+    geom_text_repel(data = subset(p.adj.df, adj < 0.05),
+                    aes(label = species),
+                    size = 3,
+                    box.padding = unit(0.2, "lines"),
+                    point.padding = unit(0.2, "lines")) +
+    ggtitle("Differentially abundant species") +
+    xlab("Generalized fold change") + 
+    ylab("Log10 adjusted p-value") +
+    theme_classic()
+  
+  print(p)
+    # save plot
+  ggsave(p, filename=paste0(PARAM$folder.results, plot.name, "wilcox.volcano.pdf"), 
+         width = 5.5, height=6)
+  } 
+
+st.cancer.3mg$rel <- rowSums(feat.st.rel.cancer.3mg)/107
+or.cancer.3mg$rel <- rowSums(feat.or.rel.cancer.3mg)/81
+
+plot.volcano(st.cancer.3mg, "st.PDACvsCTR")
+plot.volcano(or.cancer.3mg, "or.PDACvsCTR")
+
+# save all files
+save.image("wilcox.taxa.Rdata")
+```
+
+```{r session_info}
+sessionInfo()
+```
+
+
+

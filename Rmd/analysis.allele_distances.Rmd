@@ -1,0 +1,930 @@
+---
+title: "Pancreatic Cancer Microbiome, Oral-Gut Allele Distances"
+author: "Sebastian Schmidt"
+date: "2019-09-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#Make R behave slightly less stupid
+options(stringsAsFactors = FALSE)
+```
+
+
+## Prepare Environment
+
+Attach relevant packages
+
+```{r}
+library("Matrix", warn.conflicts=F, quietly=T)
+library("cluster", warn.conflicts=F, quietly=T)
+library("pROC", warn.conflicts=F, quietly=T)
+library("tidyverse", warn.conflicts=F, quietly=T)
+library("reshape2", warn.conflicts=F, quietly=T)
+library("broom", warn.conflicts=F, quietly=T)
+library("ggplot2", warn.conflicts=F, quietly=T)
+library("RColorBrewer", warn.conflicts=F, quietly=T)
+library("vegan", warn.conflicts=F, quietly=T)
+```
+
+Set parameters.
+
+```{r}
+PARAM <- list()
+PARAM$folder.R <- paste0(getwd(), "/")
+PARAM$folder.base <- gsub("Rmd/", "", PARAM$folder.R)
+PARAM$folder.data <- paste0(PARAM$folder.base, "data/")
+PARAM$folder.metadata <- paste0(PARAM$folder.base, "metadata/")
+PARAM$folder.parameters <- paste0(PARAM$folder.base, "parameters/")
+PARAM$folder.results <- paste0(PARAM$folder.base, "results/")
+PARAM$folder.allele_distances <- paste0(PARAM$folder.results, "allele.distances/")
+```
+
+Set global plotting theme.
+
+```{r}
+#Theme to bw
+theme_set(theme_minimal())
+
+#Update individual aspects of the plot theme
+theme_update(axis.line=element_blank(),
+             axis.text.y=element_blank(),
+             axis.ticks=element_blank(),
+             axis.title.x=element_text(family="Helvetica", size=4),
+             axis.title.y=element_blank(),
+             legend.position="none",
+             panel.background=element_blank(),
+             panel.border=element_blank(),
+             #panel.grid.major=element_blank(),
+             panel.grid.minor=element_blank(),
+             plot.background=element_blank(),
+             plot.margin=unit(c(0.1, 0.2, 0.1, 0), "cm")
+)
+
+#Define a function for summary statistics per taxon
+fun.summary <- function(vec) {data.frame(ymin=quantile(vec)[2], y=median(vec), ymax=quantile(vec)[4])}
+```
+
+Load data
+
+```{r}
+#Load sample data
+load(paste0(PARAM$folder.metadata, "metaG.oral_fecal.data_sample.Rdata"))
+#Load specI abundance data
+load(paste0(PARAM$folder.data, "metaG.oral_fecal.data_mOTU_rel.Rdata"))
+#Load coverage data
+load(paste0(PARAM$folder.data, "metaG.oral_fecal.data_coverage.Rdata"))
+#Load taxonomy data
+load(paste0(PARAM$folder.data, "metaG.oral_fecal.data_taxonomy.Rdata"))
+
+#Remove one badly annotated subject from the analysis
+#data.sample <- data.sample[data.sample$subject != "3109220", ]
+```
+
+Load and consolidate all allele incidence and frequency distances per taxon.
+
+```{r}
+keep.taxa <- character()
+dist.inc <- dist.freq <- list()
+for (tax.id in data.taxonomy$repID){
+  #Get current taxon name
+  taxon <- data.taxonomy[data.taxonomy$repID == tax.id, "refOTUs"]
+  print.taxon <- gsub(" ", "_", taxon)
+  print.taxon <- gsub("/", "_", print.taxon)
+  ref_mOTU <- data.taxonomy[data.taxonomy$repID == tax.id, "ref_mOTU_cluster"]
+  
+  #Get current file names
+  file.allele_distances <- paste0(PARAM$folder.allele_distances, tax.id, ".", print.taxon, ".allele_distances.RData")
+  
+  #Skip if files for taxon don't exist
+  if (! file.exists(file.allele_distances)) {next()}
+  
+  #Load current allele distances
+  load(file.allele_distances)
+  
+  #Generate and populate matrices
+  curr.samples <- unique(as.character(curr.sample_pairs))
+  mat.SNV.inc <- mat.SNV.freq <- matrix(nrow=length(curr.samples), ncol=length(curr.samples), dimnames = list(curr.samples, curr.samples))
+  #Incidence distance matrix
+  mat.SNV.inc[lower.tri(mat.SNV.inc)] <- curr.dist[,1]
+  mat.SNV.inc[upper.tri(mat.SNV.inc)] <- t(mat.SNV.inc)[upper.tri(mat.SNV.inc)]
+  diag(mat.SNV.inc) <- 0
+  #Frequency distance matrix
+  mat.SNV.freq[lower.tri(mat.SNV.freq)] <- curr.dist[,2]
+  mat.SNV.freq[upper.tri(mat.SNV.freq)] <- t(mat.SNV.freq)[upper.tri(mat.SNV.freq)]
+  diag(mat.SNV.freq) <- 0
+  
+  #Remember that there's data for the current taxon
+  keep.taxa <- c(keep.taxa, ref_mOTU)
+  
+  #Store current distance matrices
+  dist.inc[[ref_mOTU]] <- mat.SNV.inc
+  dist.freq[[ref_mOTU]] <- mat.SNV.freq
+}
+```
+
+Filter to relevant set of taxa
+
+```{r}
+rownames(data.taxonomy) <- as.character(data.taxonomy$ref_mOTU_cluster)
+my.data.taxa <- data.taxonomy[keep.taxa, ]
+```
+
+Calculate taxa prevalence in saliva and stool.
+
+```{r}
+tmp.prev <- apply(data.mOTU.rel, 1, function(v) {data.frame(prev.oral=sum(v[data.sample[names(v), "body_site"] == "saliva"] > 0, na.rm=T)/ sum(data.sample[names(v), "body_site"] == "saliva"), prev.gut = sum(v[data.sample[names(v), "body_site"] == "feces"] > 0, na.rm=T)/ sum(data.sample[names(v), "body_site"] == "feces"))})
+prev <- do.call(rbind, tmp.prev)
+data.taxonomy <- cbind(data.taxonomy, prev[match(data.taxonomy$repID, rownames(prev)), ])
+```
+
+## Detect Sub-Species Splits
+
+Test for sub-species structure for each taxon.
+
+```{r}
+collect.split_data <- data.frame()
+for (ref_mOTU in keep.taxa) {
+  writeLines(paste(date(), "=> Processing", ref_mOTU, data.taxonomy[ref_mOTU, "refOTUs"]))
+  
+  curr.dist <- as.dist(dist.freq[[ref_mOTU]])
+  
+  #Imputate NAs with mean distance
+  curr.dist[is.na(curr.dist)] <- mean(curr.dist, na.rm=T)
+  
+  #Skip if there are too few samples to consider
+  if (nrow(as.matrix(curr.dist)) < 20) {next()}
+  
+  #Cluster distaces
+  curr.clust <- kmeans(curr.dist, 2, iter.max = 100, nstart = 3)
+  
+  #Calculate AUC for a two-cluster split
+  
+  
+  #Calculate silhoutte index for n=1:20 clusters
+  #curr.clust <- hclust(curr.dist, method="average")
+  #curr.cuts <- cutree(curr.clust, 1:20)
+  #curr.silhouette <- numeric(length=ncol(curr.cuts))
+  #for (i in 2:ncol(curr.cuts)) {tmp <- summary(silhouette(curr.cuts[,i], curr.dist)); curr.silhouette[i] <- tmp$avg.width}
+  
+  
+}
+
+```
+
+## Test for Associations of Allele Frequencies with Metavariables
+
+```{r, fig.width=10, fig.height=10}
+collect.dbrda <- data.frame()
+collect.plots <- list()
+for (ref_mOTU in keep.taxa) {
+  writeLines(paste(date(), "=> Processing", ref_mOTU, data.taxonomy[ref_mOTU, "refOTUs"]))
+  
+  curr.dist <- as.dist(dist.freq[[ref_mOTU]])
+  
+  #Imputate NAs with mean distance
+  curr.dist[is.na(curr.dist)] <- mean(curr.dist, na.rm=T)
+  
+  #Subset samples
+  data.sample %>%
+    filter(experiment_name %in% rownames(dist.freq[[ref_mOTU]])) %>%
+    filter(status %in% c("PC", "CTR")) %>%
+    drop_na(
+      smoker,
+      comorbidity.diabetes, comorbidity.obesity, comorbidity.asthma, comorbidity.rhinitis, comorbidity.heartburn, comorbidity.acid_regurgitation, comorbidity.receding_gums,
+      medication.anti_inflammatory, medication.acid_heartburn, medication.aspirin, medication.antibiotic, medication.metformin
+    ) %>%
+    pull(experiment_name) %>%
+    as.character() -> my.samples
+  curr.samples <- my.samples
+  curr.data.sample <- data.sample[curr.samples, ]
+  
+  if (length(curr.samples) < 20) {next()}
+  
+  # #Build formula for the PERMANOVA test
+  # curr.terms <- character()
+  # #Add terms sequentially to model
+  # for (var in c(
+  #   "center",
+  #   "age_years",
+  #   "sex",
+  #   "smoker",
+  #   "comorbidity.diabetes",
+  #   "comorbidity.obesity",
+  #   "comorbidity.asthma",
+  #   "comorbidity.rhinitis",
+  #   "comorbidity.heartburn",
+  #   "comorbidity.acid_regurgitation",
+  #   "comorbidity.receding_gums",
+  #   "medication.anti_inflammatory",
+  #   "medication.acid_heartburn",
+  #   "medication.aspirin",
+  #   "medication.antibiotic",
+  #   "medication.metformin",
+  #   "status"
+  # )) {
+  #   if (length(unique(curr.data.sample[, var])) > 1) {curr.terms <- c(curr.terms, var)}
+  # }
+  # if (sum(curr.data.sample$body_site == "saliva") > 20 & sum(curr.data.sample$body_site == "feces") > 20) {curr.terms <- c("body_site", curr.terms)}
+  # my.terms <- paste(curr.terms, collapse =  " + ")
+  # curr.formula <- paste("curr.dist ~ ", my.terms)
+  # 
+  # #Perform PERMANOVA
+  # curr.dist <- as.dist(dist.inc[[ref_mOTU]][curr.samples, curr.samples]); curr.dist[is.na(curr.dist)] <- mean(curr.dist, na.rm=T)
+  # #curr.aov <- adonis2(as.formula(curr.formula), data=curr.data.sample, by="terms", permutations = 9999)
+  # 
+  # curr.dbrda <- dbrda(as.formula(curr.formula), data=curr.data.sample, by="terms", permutations = 9999)
+  # curr.aov <- anova(curr.dbrda, by="terms", permutations = 9999)
+  # curr.aov$R2 <- curr.aov$SumOfSqs / sum(curr.aov$SumOfSqs)
+  # curr.aov.tidy <- tidy(curr.aov) %>% select(term, SumOfSqs, statistic, p.value, R2)
+  # curr.aov.tidy$ref_mOTU_cluster <- ref_mOTU
+  # curr.aov.tidy$body_site <- "both"
+  # 
+  # #Store results
+  # collect.dbrda <- rbind(collect.dbrda, curr.aov.tidy)
+  # 
+  # #Collect dbRDA data for (later) plotting
+  # curr.eigen <- summary(eigenvals(curr.dbrda))
+  # curr.plot <- plot(curr.dbrda, display=c("cn", "wa"))
+  # #Store biplot vectors
+  # curr.biplot <- data.frame(
+  #   covariate = rownames(curr.plot$biplot),
+  #   dbRDA1 = curr.plot$biplot[,1],
+  #   dbRDA2 = curr.plot$biplot[,2]
+  # )
+  # #Store biplot group centroids
+  # curr.centroids <- data.frame(
+  #   covariate = c(rownames(curr.plot$centroids), rownames(curr.plot$biplot)),
+  #   dbRDA1 = c(curr.plot$centroids[,1], curr.plot$biplot[,1]),
+  #   dbRDA2 = c(curr.plot$centroids[,2], curr.plot$biplot[,2])
+  # )
+  # #Get current sample coordinates
+  # curr.coord <- data.frame(
+  #   body_site = data.sample[curr.samples, "body_site"],
+  #   status = data.sample[curr.samples, "status"],
+  #   dbRDA1 = curr.plot$sites[,1],
+  #   dbRDA2 = curr.plot$sites[,2]
+  # )
+  # #Get convex hulls around points
+  # plot.hulls <- plyr::ddply(curr.coord, c("body_site", "status"), function(df) df[chull(df$dbRDA1, df$dbRDA2), ])
+  # #Get centroids
+  # plot.centroids <- curr.coord %>% group_by(body_site, status) %>% summarise(V1=mean(dbRDA1), V2=mean(dbRDA2))
+  # curr.plot.df <- full_join(curr.coord, plot.centroids)
+  # 
+  # #Generate current dbRDA plot
+  # p.dbRDA <- ggplot(curr.plot.df, aes(x=dbRDA1, y=dbRDA2, colour=interaction(body_site, status))) +
+  #   #Add indicator of 0-lines
+  #   geom_hline(yintercept = 0, alpha=0.5) +
+  #   geom_vline(xintercept = 0, alpha=0.5) +
+  #   #Add group centroids
+  #   geom_point(data=curr.plot.df, aes(x=V1, y=V2, color=interaction(body_site, status)), shape=15, size=6, alpha=0.6) +
+  #   #Add segments of points to centroids
+  #   geom_segment(data=curr.plot.df, aes(x=dbRDA1, y=dbRDA2, xend=V1, yend=V2), alpha=0.6) +
+  #   #Add points (per sample)
+  #   geom_point(size=4, alpha=0.6) +
+  #   #Add convex hull around all points per group
+  #   geom_polygon(data = plot.hulls, aes(fill=interaction(body_site, status)), color=NA, alpha = 0.1) +
+  #   #Add biplot vectors (in dark grey)
+  #   geom_segment(data=curr.biplot, aes(x=dbRDA1, y=dbRDA2, xend=0, yend=0), colour="#525252") +
+  #   #Add biplot centroids
+  #   #geom_point(data=curr.centroids, colour="#525252", shape=15, size=5, alpha=0.8) +
+  #   #Add biplot centroid labels
+  #   geom_label(data=curr.biplot, aes(label=covariate), colour="#525252", fill="#f0f0f0", alpha=0.6) +
+  #   #Add x & y axis labels
+  #   xlab(paste("dbRDA1 [", round(100 * curr.eigen[2,1], digits=2), "%]", sep="")) +
+  #   ylab(paste("dbRDA2 [", round(100 * curr.eigen[2,2], digits=2), "%]", sep="")) +
+  #   #Add title
+  #   #ggtitle(paste(diag, "vs CTR")) +
+  #   #Scale fill and colour
+  #   scale_fill_brewer(palette = "Accent") +
+  #   scale_colour_brewer(palette = "Accent") +
+  #   #Set overall plot theme
+  #   theme_minimal() +
+  #   #Amend plot theme
+  #   #theme(
+  #   #  legend.position = "none"
+  #   #) +
+  #   NULL
+  # #Store plot for later processing
+  # collect.plots[[ref_mOTU]] <- p.dbRDA
+  
+  
+  #Repeat, habitat-specific
+  for (body_site in c("saliva", "feces")) {
+    if (sum(curr.data.sample$body_site == body_site) < 20) {next()}
+    curr.samples <- rownames(data.sample)[rownames(data.sample) %in% my.samples & data.sample$body_site == body_site]
+    curr.data.sample <- data.sample[curr.samples, ]
+    
+    #Build formula for the PERMANOVA test
+    curr.terms <- character()
+    #Add terms sequentially to model
+    for (var in c(
+      "center",
+      "age_years",
+      "sex",
+      "smoker",
+      "comorbidity.diabetes",
+      "comorbidity.obesity",
+      "comorbidity.asthma",
+      "comorbidity.rhinitis",
+      "comorbidity.heartburn",
+      "comorbidity.acid_regurgitation",
+      "comorbidity.receding_gums",
+      "medication.anti_inflammatory",
+      "medication.acid_heartburn",
+      "medication.aspirin",
+      "medication.antibiotic",
+      "medication.metformin",
+      "status"
+    )) {
+      if (length(unique(curr.data.sample[, var])) > 1) {curr.terms <- c(curr.terms, var)}
+    }
+    my.terms <- paste(curr.terms, collapse =  " + ")
+    curr.formula <- paste("curr.dist ~ ", my.terms)
+    
+    curr.dist <- as.dist(dist.inc[[ref_mOTU]][curr.samples, curr.samples]); curr.dist[is.na(curr.dist)] <- mean(curr.dist, na.rm=T)
+    #curr.aov <- adonis2(as.formula(curr.formula), data=curr.data.sample, by="terms", permutations = 9999)
+    
+    curr.dbrda <- dbrda(as.formula(curr.formula), data=curr.data.sample, by="terms", permutations = 9999)
+    curr.aov <- anova(curr.dbrda, by="terms", permutations = 9999)
+    curr.aov$R2 <- curr.aov$SumOfSqs / sum(curr.aov$SumOfSqs)
+    curr.aov.tidy <- tidy(curr.aov) %>% select(term, SumOfSqs, statistic, p.value, R2)
+    curr.aov.tidy$ref_mOTU_cluster <- ref_mOTU
+    curr.aov.tidy$body_site <- body_site
+    curr.aov.tidy$n.PDAC <- sum(curr.data.sample$status == "PC")
+    curr.aov.tidy$n.CTR <- sum(curr.data.sample$status == "CTR")
+    
+    #Store results
+    collect.dbrda <- rbind(collect.dbrda, curr.aov.tidy)
+  }
+}
+```
+
+Store dbRDA results.
+
+```{r}
+save(collect.dbrda, file = paste0(PARAM$folder.results, "allele.distances/collect.dbrda.Rdata"))
+```
+
+Generate dbRDA plots for selected taxa.
+
+```{r, fig.width=4, fig.height=4}
+for (ref_mOTU in c("ref_mOTU_v2_0150", "ref_mOTU_v2_1405", "ref_mOTU_v2_1416", "ref_mOTU_v2_1475")) {
+  bs <- "feces"
+  bs <- "saliva"
+  
+  data.sample %>%
+    filter(experiment_name %in% rownames(dist.freq[[ref_mOTU]])) %>%
+    filter(body_site == bs) %>%
+    filter(status %in% c("PC", "CTR")) %>%
+    drop_na(
+      smoker,
+      comorbidity.diabetes, comorbidity.obesity, comorbidity.asthma, comorbidity.rhinitis, comorbidity.heartburn, comorbidity.acid_regurgitation, comorbidity.receding_gums,
+      medication.anti_inflammatory, medication.acid_heartburn, medication.aspirin, medication.antibiotic, medication.metformin
+    ) %>%
+    pull(experiment_name) %>%
+    as.character() -> my.samples
+  curr.samples <- my.samples
+  curr.data.sample <- data.sample[curr.samples, ]
+  
+  #Build formula for the PERMANOVA test
+  curr.terms <- character()
+  #Add terms sequentially to model
+  for (var in c(
+    "center",
+    "age_years",
+    "sex",
+    "smoker",
+    "comorbidity.diabetes",
+    "comorbidity.obesity",
+    "comorbidity.asthma",
+    "comorbidity.rhinitis",
+    "comorbidity.heartburn",
+    "comorbidity.acid_regurgitation",
+    "comorbidity.receding_gums",
+    "medication.anti_inflammatory",
+    "medication.acid_heartburn",
+    "medication.aspirin",
+    "medication.antibiotic",
+    "medication.metformin",
+    "status"
+  )) {
+    if (length(unique(curr.data.sample[, var])) > 1) {curr.terms <- c(curr.terms, var)}
+  }
+  my.terms <- paste(curr.terms, collapse =  " + ")
+  curr.formula <- paste("curr.dist ~ ", my.terms)
+  
+  curr.dist <- as.dist(dist.inc[[ref_mOTU]][curr.samples, curr.samples]); curr.dist[is.na(curr.dist)] <- mean(curr.dist, na.rm=T)
+  curr.dbrda <- dbrda(as.formula(curr.formula), data=curr.data.sample, by="terms", permutations = 9999)
+  
+  #Collect dbRDA data for (later) plotting
+  curr.eigen <- summary(eigenvals(curr.dbrda))
+  curr.plot <- plot(curr.dbrda, display=c("cn", "wa"))
+  #Store biplot vectors
+  curr.biplot <- data.frame(
+    covariate = rownames(curr.plot$biplot),
+    dbRDA1 = curr.plot$biplot[,1],
+    dbRDA2 = curr.plot$biplot[,2]
+  )
+  #Store biplot group centroids
+  curr.centroids <- data.frame(
+    covariate = c(rownames(curr.plot$centroids), rownames(curr.plot$biplot)),
+    dbRDA1 = c(curr.plot$centroids[,1], curr.plot$biplot[,1]),
+    dbRDA2 = c(curr.plot$centroids[,2], curr.plot$biplot[,2])
+  )
+  #Get current sample coordinates
+  curr.coord <- data.frame(
+    body_site = data.sample[curr.samples, "body_site"],
+    status = data.sample[curr.samples, "status"],
+    dbRDA1 = curr.plot$sites[,1],
+    dbRDA2 = curr.plot$sites[,2]
+  )
+  #Get convex hulls around points
+  plot.hulls <- plyr::ddply(curr.coord, c("body_site", "status"), function(df) df[chull(df$dbRDA1, df$dbRDA2), ])
+  #Get centroids
+  plot.centroids <- curr.coord %>% group_by(body_site, status) %>% summarise(V1=mean(dbRDA1), V2=mean(dbRDA2))
+  curr.plot.df <- full_join(curr.coord, plot.centroids)
+
+  #Generate current dbRDA plot
+  p.dbRDA <- ggplot(curr.plot.df, aes(x=dbRDA1, y=dbRDA2, colour=interaction(body_site, status))) +
+    #Add indicator of 0-lines
+    geom_hline(yintercept = 0, alpha=0.5) +
+    geom_vline(xintercept = 0, alpha=0.5) +
+    #Add group centroids
+    geom_point(data=curr.plot.df, aes(x=V1, y=V2, color=interaction(body_site, status)), shape=15, size=6, alpha=0.6) +
+    #Add segments of points to centroids
+    geom_segment(data=curr.plot.df, aes(x=dbRDA1, y=dbRDA2, xend=V1, yend=V2), alpha=0.6) +
+    #Add points (per sample)
+    geom_point(size=4, alpha=0.6) +
+    #Add convex hull around all points per group
+    geom_polygon(data = plot.hulls, aes(fill=interaction(body_site, status)), color=NA, alpha = 0.1) +
+    #Add biplot vectors (in dark grey)
+    #geom_segment(data=curr.biplot, aes(x=dbRDA1, y=dbRDA2, xend=0, yend=0), colour="#525252") +
+    #Add biplot centroids
+    #geom_point(data=curr.centroids, colour="#525252", shape=15, size=5, alpha=0.8) +
+    #Add biplot centroid labels
+    #geom_label(data=curr.biplot, aes(label=covariate), colour="#525252", fill="#f0f0f0", alpha=0.6) +
+    #Add x & y axis labels
+    xlab(paste("dbRDA1 [", round(100 * curr.eigen[2,1], digits=2), "%]", sep="")) +
+    ylab(paste("dbRDA2 [", round(100 * curr.eigen[2,2], digits=2), "%]", sep="")) +
+    #Add title
+    #ggtitle(paste(diag, "vs CTR")) +
+    #Scale fill and colour
+    scale_fill_brewer(palette = "Accent") +
+    scale_colour_brewer(palette = "Accent") +
+    #Set overall plot theme
+    theme_minimal() +
+    #Amend plot theme
+    #theme(
+    #  legend.position = "none"
+    #) +
+    NULL
+  #Store plot for later processing
+  p.dbRDA
+}
+
+```
+
+
+```{r}
+collect.dbrda %>%
+  filter(body_site == "feces") %>%
+  left_join(data.taxonomy) %>%
+  filter(term == "status") %>%
+  filter(prev.gut >= 0.5) %>%
+  select(-body_site, -SumOfSqs) %>%
+  group_by(term) %>%
+  mutate(
+    p.adj=p.adjust(p.value, "BH"),
+    R2 = round(100*R2, digits = 2)
+    #prev.oral = round(100*prev.oral, digits=2),
+    #prev.gut=round(100*prev.gut, digits = 2)
+  ) %>%
+  filter(p.value < 0.05) %>%
+  filter(R2 > 1) %>%
+  select(ref_mOTU_cluster, refOTUs, prev.gut, n.PDAC, n.CTR, R2, p.adj) %>%
+  arrange(desc(R2)) %>%
+  as.data.frame()
+
+collect.dbrda %>%
+  select(-body_site, -SumOfSqs, -statistic) %>%
+  filter(ref_mOTU_cluster == "ref_mOTU_v2_4942") %>%
+  arrange(p.value)
+```
+
+
+Which taxa show an association of intra-specific allele distances to disease status?
+
+```{r, fig.height=10, fig.width=6}
+collect.dbrda %>%
+  left_join(data.taxonomy) %>%
+  group_by(term) %>%
+  mutate(p.adj=p.adjust(p.value, "BH"), R2 = round(100*R2, digits = 2), prev.oral = round(100*prev.oral, digits=2), prev.gut=round(100*prev.gut, digits = 2)) %>%
+  #filter(term == "center") %>%
+  filter(p.adj< 0.05) %>%
+  arrange(term, p.adj) %>%
+  select(term, body_site, phylum, family, refOTUs, ref_mOTU_cluster, prev.oral, prev.gut, R2, p.adj) -> collect.dbrda.sig
+
+write.table(collect.dbrda.sig, file=paste0(PARAM$folder.results, "allele_dist.dbRDA.tsv"), sep="\t", quote=F, na = "", row.names = F)
+
+collect.dbrda.sig %>% group_by(phylum, family, ref_mOTU_cluster, refOTUs) %>% summarise(n=n()) %>% arrange(phylum, family) -> curr.labels
+
+p.assoc <- ggplot(collect.dbrda.sig, aes(x=term, y=ref_mOTU_cluster, fill=R2)) +
+  geom_tile() +
+  #geom_text(aes(label=sig), color="black", size=3) +
+  scale_fill_distiller(palette = "PuBu", direction = 1, na.value = "white") +
+  scale_y_discrete(limits=as.character(curr.labels$ref_mOTU_cluster), labels=as.character(curr.labels$refOTUs)) +
+  theme_minimal() +
+  theme(
+    axis.title = element_blank()
+  ) +
+  NULL
+p.assoc
+ggsave(p.assoc, width=15, height=25, filename=paste0(PARAM$folder.results, "allele_dist.assoc_metavariables.pdf"), useDingbats=F, dpi=1200)
+```
+
+Explore trends in strain population similarities between body sites among disease groups.
+
+```{r}
+collect.allele_dist.body_site <- res.allele_dist.body_site <- data.frame()
+for (ref_mOTU in keep.taxa) {
+  #writeLines(paste(date(), "=> Processing", ref_mOTU, data.taxonomy[ref_mOTU, "refOTUs"]))
+  
+  #Subset samples
+  curr.samples <- rownames(data.sample)[rownames(data.sample) %in% rownames(dist.freq[[ref_mOTU]]) & data.sample$status != "Pancreatitis"]
+  curr.data.sample <- data.sample[curr.samples, ]
+  
+  #Skip if not at least 5 subjects are available for each category of OR-CTR, OR-PC, ST-CTR, ST-PC
+  curr.data.sample$category <- paste(curr.data.sample$body_site, curr.data.sample$status, sep=".")
+  if (sum(curr.data.sample$category == "saliva.CTR") < 5 | sum(curr.data.sample$category == "saliva.PC") < 5 | sum(curr.data.sample$category == "feces.CTR") < 5 | sum(curr.data.sample$category == "feces.PC") < 5) {next()}
+  
+  #Get current allele frequency distances
+  curr.dist <- as.dist(dist.freq[[ref_mOTU]][rownames(curr.data.sample), rownames(curr.data.sample)])
+  
+  #Get pairs of samples
+  c.combn <- t(combn(curr.samples, 2))
+  
+  #Compile current dist data.frame
+  c.dat <- data.frame(
+    ref_mOTU_cluster = ref_mOTU,
+    sample.1 = c.combn[,1],
+    sample.2 = c.combn[,2],
+    body_site.1 = as.character(curr.data.sample[c.combn[,1], "body_site"]),
+    body_site.2 = as.character(curr.data.sample[c.combn[,2], "body_site"]),
+    body_site.intra = curr.data.sample[c.combn[,1], "body_site"] == curr.data.sample[c.combn[,2], "body_site"],
+    status.1 = as.character(curr.data.sample[c.combn[,1], "status"]),
+    status.2 = as.character(curr.data.sample[c.combn[,2], "status"]),
+    status.intra = curr.data.sample[c.combn[,1], "status"] == curr.data.sample[c.combn[,2], "status"]
+  ) %>%
+    mutate(
+      bs.1 = ifelse(body_site.1 == "saliva" & body_site.2 == "feces", "feces", body_site.1),
+      bs.2 = ifelse(body_site.1 == "saliva" & body_site.2 == "feces", "saliva", body_site.2),
+      st.1 = ifelse(body_site.1 == "saliva" & body_site.2 == "feces", status.2, status.1),
+      st.2 = ifelse(body_site.1 == "saliva" & body_site.2 == "feces", status.1, status.2),
+      body_site.1 = bs.1,
+      body_site.2 = bs.2,
+      status.1 = st.1,
+      status.2 = st.2
+    ) %>%
+    select(-bs.1, -bs.2, -st.1, -st.2) %>%
+    mutate(
+      category.1 = paste(as.character(body_site.1), as.character(status.1), sep="."),
+      category.2 = paste(body_site.2, status.2, sep="."),
+      category.intra = category.1 == category.2,
+      comparison = paste(category.1, category.2, sep="-"),
+      comparison.alt = ifelse(!body_site.intra, paste(category.1, "saliva", sep="-"), comparison),
+      comparison.alt2 = ifelse(!body_site.intra, paste("feces", category.2, sep="-"), comparison),
+      dist = as.numeric(curr.dist)
+    ) %>%
+    filter(!is.na(dist))
+  
+  if (length(unique(c.dat$comparison.alt[!c.dat$body_site.intra])) < 2) { next() }
+  if (length(unique(c.dat$comparison.alt2[!c.dat$body_site.intra])) < 2) { next() }
+  
+  #Append to global collection frame
+  collect.allele_dist.body_site <- bind_rows(collect.allele_dist.body_site, c.dat)
+  
+  c.res <- bind_rows(
+      (c.dat %>%
+         filter(!body_site.intra) %>%
+         group_by(comparison.alt) %>%
+         summarise(
+           test = "feces_PC_CTR.vs.saliva",
+           n.comp = n(),
+           p = (wilcox.test(dist ~ comparison.alt, data=.))$p.value,
+           cohen.d = -(effsize::cohen.d(dist ~ comparison.alt, data=.))$estimate,
+           mean = mean(dist, na.rm=T),
+           median = median(dist, na.rm=T)
+         ) %>%
+         mutate(n.ratio = n.comp / (sum(n.comp) - n.comp), dist.ratio = median[2] / median[1]) %>%
+         arrange(comparison.alt)
+      ),
+      (c.dat %>%
+         filter(!body_site.intra) %>%
+         group_by(comparison.alt2) %>%
+         summarise(
+           test = "saliva_PC_CTR.vs.feces",
+           n.comp = n(),
+           p = (wilcox.test(dist ~ comparison.alt2, data=.))$p.value,
+           cohen.d = -(effsize::cohen.d(dist ~ comparison.alt2, data=.))$estimate,
+           mean = mean(dist, na.rm=T),
+           median = median(dist, na.rm=T)
+         ) %>%
+         mutate(n.ratio = n.comp / (sum(n.comp) - n.comp), dist.ratio = median[2] / median[1]) %>% 
+         arrange(comparison.alt2)
+      )
+    ) %>% group_by(test) %>% summarise(n.comp=sum(n.comp), n.ratio=first(n.ratio), p=first(p), cohen.d=first(cohen.d), dist.ratio = first(dist.ratio), ref_mOTU_cluster = ref_mOTU)
+  
+  res.allele_dist.body_site <- bind_rows(res.allele_dist.body_site, c.res)
+}
+
+res.allele_dist.body_site <- left_join(res.allele_dist.body_site, data.taxonomy)
+```
+
+For which taxa are strain populations in one body site significantly more/less similar to the other in PC patients vs controls?
+
+```{r}
+res.allele_dist.body_site.filtered <- bind_rows(
+  (res.allele_dist.body_site %>%
+    filter(prev.oral > 0 & prev.gut > 0 & test == "feces_PC_CTR.vs.saliva") %>%
+    mutate(p.adj = p.adjust(p)) %>%
+    mutate(sig = ifelse(p.adj < 0.05, "TRUE", "")) %>%
+    arrange(cohen.d) %>%
+    select(test, n.comp, n.ratio, cohen.d, dist.ratio, p.adj, sig, ref_mOTU_cluster, phylum, family, refOTUs, prev.oral, prev.gut)),
+  (res.allele_dist.body_site %>%
+    filter(prev.oral > 0 & prev.gut > 0 & test == "saliva_PC_CTR.vs.feces") %>%
+    mutate(p.adj = p.adjust(p)) %>%
+     mutate(sig = ifelse(p.adj < 0.05, "TRUE", "")) %>%
+    arrange(cohen.d) %>%
+    select(test, n.comp, n.ratio, cohen.d, dist.ratio, p.adj, sig, ref_mOTU_cluster, phylum, family, refOTUs, prev.oral, prev.gut))
+)
+res.allele_dist.body_site.filtered %>% filter(sig == "TRUE")
+```
+
+```{r, fig.height=6, fig.width=6}
+res.allele_dist.body_site.filtered %>%
+  ggplot(aes(x=cohen.d, y=p.adj, size=n.comp, colour=phylum)) +
+    geom_point(alpha=0.6) +
+    geom_hline(yintercept = 0.05) +
+    geom_vline(xintercept = 0) +
+    scale_y_log10() +
+    scale_colour_brewer(palette = "Paired") +
+    facet_wrap(test ~ .) +
+    theme_minimal()
+```
+
+Plot Cohen's d on distance comparisons.
+
+```{r, fig.height=8, fig.width=6}
+ggplot(res.allele_dist.body_site.filtered, aes(x=refOTUs, y=cohen.d, colour=sig)) +
+  geom_point(alpha=0.8) +
+  scale_colour_manual(values=c("grey", "blue")) +
+  #scale_color_brewer(palette = "Paired") +
+  scale_x_discrete(limits = (res.allele_dist.body_site.filtered %>% filter(test=="feces_PC_CTR.vs.saliva") %>% arrange(desc(cohen.d)) %>% pull(refOTUs))) +
+  geom_hline(yintercept = 0) +
+  ylab("Cohen's d (dist to PC / dist to CTR)") +
+  coord_flip() +
+  facet_wrap(. ~ test) +
+  theme_minimal() +
+  theme(
+    axis.title.y = element_blank()
+  ) -> curr.plot
+print(curr.plot)
+
+ggsave(curr.plot, width=10, height=16, filename=paste0(PARAM$folder.results, "allele_dist.PC_vs_CTR.body_sites.pdf"), useDingbats=F, dpi=1200)
+```
+
+Plot distances.
+
+```{r, fig.width=8, fig.height=10}
+collect.allele_dist.body_site %>%
+  filter(!body_site.intra & !category.intra & ref_mOTU_cluster %in% res.allele_dist.body_site.filtered$ref_mOTU_cluster[res.allele_dist.body_site.filtered$sig == "TRUE"]) %>%
+  left_join(data.taxonomy) %>%
+  filter(prev.oral > 0 & prev.gut > 0) %>%
+  ggplot(aes(x=refOTUs, y=dist, colour=comparison, fill=comparison)) +
+    geom_boxplot(alpha=0.6) +
+    #geom_point(position = position_jitterdodge(), alpha=0.8) +
+    scale_color_brewer(palette = "Paired") +
+    scale_fill_brewer(palette = "Paired") +
+    coord_flip() +
+    theme_minimal()
+
+```
+
+Plot heatmaps of association effect sizes.
+
+```{r, fig.width=10, fig.height=20}
+#Melt data into a common data.frame
+tmp.frame.R2 <- melt(as.data.frame(collect.permanova[, 1:10]), id.vars=c("tax.id"), value.name = "R2")
+tmp.frame.p <- melt(as.data.frame(collect.permanova[, c(1, 11:19)]), id.vars=c("tax.id"), value.name = "p")
+plot.permanova <- data.frame(
+  tax.id = tmp.frame.R2[,1],
+  my.data.taxa[as.character(tmp.frame.R2[,1]), ],
+  variable = gsub(pattern = "R2_", replacement = "", tmp.frame.R2$variable),
+  R2 = tmp.frame.R2$R2,
+  p = tmp.frame.p$p
+)
+
+plot.permanova$R2[plot.permanova$R2 < 0] <- NA
+plot.permanova$R2[plot.permanova$R2 > 0.1] <- 0.1
+plot.permanova$sig <- cut(plot.permanova$p, breaks=c(-Inf, 0.001, 0.01, 0.05, Inf), label=c("***", "**", "*", ""))
+#Re-order variable names
+plot.permanova$variable <- factor(plot.permanova$variable, levels=c("site", "center", "age", "sex", "smokingstatus", "periodontitis", "antibiotic", "metformin.ever", "status"))
+#Get taxa ordering by taxonomy
+sub.taxa <- my.data.taxa[my.data.taxa$repID %in% plot.permanova$tax.id[!is.na(plot.permanova$R2)], ]
+order.taxa <- order(sub.taxa$phylum, sub.taxa$class, sub.taxa$order, sub.taxa$family, sub.taxa$genus)
+
+plot.permanova$tax.id <- as.character(plot.permanova$tax.id)
+
+#Plot
+p.assoc <- ggplot(plot.permanova, aes(x=variable, y=tax.id, fill=R2)) +
+  geom_tile() +
+  geom_text(aes(label=sig), color="black", size=3) +
+  scale_fill_distiller(palette = "PuBu", direction = 1, na.value = "white") +
+  scale_y_discrete(limits=as.character(sub.taxa$repID), labels=as.character(sub.taxa$refOTUs)[order.taxa]) +
+  theme_minimal() +
+  NULL
+p.assoc
+ggsave(p.assoc, width=15, height=25, filename=paste0(PARAM$folder.results, "allele_dist.assoc_metavariables.pdf"), useDingbats=F, dpi=1200)
+```
+
+Get a closer picture of taxa with clear oral-gut splits.
+
+```{r}
+order.R2.by_site <- order(collect.permanova[, "R2_site"], decreasing = T)
+
+head(cbind(data.taxonomy[as.character(collect.permanova[order.R2.by_site, 1]), "refOTUs"], collect.permanova[order.R2.by_site, c("R2_site", "p_site")]), 50)
+
+#Sub-select taxa of interest
+taxa.R2.site <- c(
+  "216816",   #Bifidobacterium breve
+  "203275",   #Tannerella forsythia
+  "431947",   #Prophyromonas gingivalis
+  "322159",   #Streptococcus thermophilus
+  "1403946",  #Streptococcus anginosus
+  "435842",   #Streptococcus salivarius
+  "479436",   #Veillonella parvula
+  "546273",   #Veillonella dispar
+  "457405",   #Fusobacterium nucleatum animalis
+  "190304"    #Fusobacterium nucleatum nucleatum
+)
+```
+
+
+```{r}
+for (tax.id in as.character(collect.permanova[,1])) {
+  taxon <- data.taxonomy[data.taxonomy$repID == tax.id, "refOTUs"]
+  print.taxon <- gsub(" ", "_", taxon)
+  print.taxon <- gsub("/", "_", print.taxon)
+  
+  curr.samples <- rownames(data.sample)[rownames(data.sample) %in% rownames(dist.inc[[tax.id]]) & data.sample$status %in% c("cancer", "control") & data.sample$final_eligibility == "ELIGIBLE"]
+  curr.data.sample <- droplevels(data.sample[curr.samples, ])
+  curr.dist <- as.dist(dist.inc[[tax.id]][curr.samples, curr.samples]); curr.dist[is.na(curr.dist)] <- mean(curr.dist, na.rm=T)
+  
+  ##############################
+  #Ordinate (PCoA)
+  curr.pcoa <- pcoa(curr.dist)
+  ##############################
+  #Prepare data for plotting
+  plot.data <- data.frame(curr.data.sample, Axis.1=curr.pcoa$vectors[, "Axis.1"], Axis.2=curr.pcoa$vectors[, "Axis.2"], Group=interaction(curr.data.sample$site, droplevels(curr.data.sample$status)));
+  #Get percent variation explained
+  if (curr.pcoa$correction[1] == "none") {
+    plot.var_explained <- round(100*curr.pcoa$values[1:2, "Relative_eig"]/sum(curr.pcoa$values[, "Relative_eig"]), digits=1)
+  } else {
+    plot.var_explained <- round(100*curr.pcoa$values[1:2, "Rel_corr_eig"]/sum(curr.pcoa$values[, "Rel_corr_eig"]), digits=1)
+  }
+  #Get convex hulls around points
+  plot.hulls <- ddply(plot.data, "Group", function(df) df[chull(df$Axis.1, df$Axis.2), ])
+  #Get centroids
+  plot.centroids <- ddply(plot.data, "Group", function(df) c(mean(df$Axis.1), mean(df$Axis.2)))
+  curr.plot.df <- merge(plot.data, plot.centroids, by="Group")
+  ##############################
+  #Plot ordination
+  p.pcoa <- ggplot(curr.plot.df, aes_string(x="Axis.1", y="Axis.2", colour="Group", shape="status")) +
+    #Add points (per sample)
+    geom_point(size=5, alpha=0.6) +
+    #Add group centroids
+    geom_point(data=curr.plot.df, aes(x=V1, y=V2, color=Group), shape=15, size=8) +
+    #Add segments of points to centroids
+    geom_segment(data=curr.plot.df, aes(x=Axis.1, y=Axis.2, xend=V1, yend=V2), alpha=0.75) +
+    #Add ellipses (at 95%)
+    stat_ellipse(level=0.95, segments=101, alpha=0.8) +
+    #Add convex hull around all points per group
+    #geom_polygon(data = plot.hulls, aes(fill=cohort), color=NA, alpha = 0.1) +
+    #Add x & y axis labels
+    xlab(paste("Axis 1 [", plot.var_explained[1], "%]", sep="")) +
+    ylab(paste("Axis 2 [", plot.var_explained[2], "%]", sep="")) +
+    ggtitle(data.taxonomy[tax.id, "refOTUs"]) +
+    #Change colour and fill scheme
+    scale_color_manual(values=c("#4393c3", "#b2182b", "#92c5de", "#d6604d")) +
+    #Set overall plot theme
+    theme_minimal() +
+    NULL
+  p.pcoa
+  #Save plot
+  ggsave(p.pcoa, filename=paste0(PARAM$folder.results, "allele.distances.plots/", tax.id, ".", print.taxon, ".body_site_split.pcoa.pdf"), width=15, height=15, useDingbats=F)
+}
+```
+
+
+
+
+
+
+
+
+
+
+Generate combined prevalence plot.
+
+```{r}
+plot.pre_df <- my.data.taxa
+plot.pre_df$prevalence.gut <- 0 - plot.pre_df$prevalence.gut
+plot.df <- melt(plot.pre_df, c("genus", "refOTUs"), measure.vars=c("prevalence.oral", "prevalence.gut"))
+p.prevalence.all <- ggplot(plot.df, aes(x=refOTUs, y=variable, fill=value)) +
+  geom_tile() +
+  scale_fill_gradient2(low = PARAM$colour.gut, mid = "white", high = PARAM$colour.saliva, midpoint = 0, space = "Lab", limits=c(-1, 1)) +
+  scale_x_discrete(limits=as.character(my.data.taxa$refOTUs)[order.use], labels=as.character(my.data.taxa$refOTUs)[order.use]) +
+  scale_y_discrete(limits=c("prevalence.gut", "prevalence.oral")) +
+  theme_minimal() +
+  theme(
+    panel.grid.major=element_blank(),
+    panel.grid.minor=element_blank(),
+    legend.position = "none",
+    #axis.text.y=element_text(family="Helvetica", size=5),
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    strip.background = element_blank(),
+    strip.text.x = element_blank()
+  )
+p.prevalence.all
+```
+
+Prevalence scatter plot.
+
+```{r}
+p.prevalence.scatter <- ggplot(my.data.taxa.full, aes(x=prevalence.gut, y=prevalence.oral, colour=transmitter.category)) +
+  geom_point(size=0.2, alpha=0.8) +
+  scale_colour_manual(values=c(PARAM$colour.gut, PARAM$colour.non_transmitter, PARAM$colour.occ_transmitter, PARAM$colour.transmitter, PARAM$colour.saliva)) +
+  #Add lines defining predominantly oral and fecal species
+  geom_hline(yintercept = 0.1, size=0.2) +
+  geom_vline(xintercept = 0.1, size=0.2) +
+  theme_minimal() +
+  # theme(
+  #   #panel.grid.major=element_blank(),
+  #   panel.grid.minor=element_blank(),
+  #   legend.position = "none",
+  #   #axis.text.y=element_text(family="Helvetica", size=5),
+  #   axis.text = element_blank(),
+  #   axis.title = element_blank(),
+  #   strip.background = element_blank(),
+  #   strip.text.x = element_blank()
+  # ) +
+  NULL
+p.prevalence.scatter
+```
+
+
+Transmission scores per taxon.
+
+```{r}
+plot.df <- my.data.detect_transmission[, c("Taxon", "transmission.score", "transmission.score.p.adj")]
+plot.df$logP <- -log10(plot.df$transmission.score.p.adj)
+plot.df$logP[plot.df$logP == Inf] <- max(plot.df$logP[is.finite(plot.df$logP)])
+p.transmission_scores <- ggplot(plot.df, aes(x=Taxon, y=transmission.score, colour=logP, alpha=logP)) +
+  geom_jitter(size=0.3, width = 0.3) +
+  geom_point(data=my.data.taxa, aes(x=refOTUs, y=transmission.score.median), size=1, colour="black", alpha=1) +
+  scale_alpha_continuous(range=c(0.2, 0.9), limits=c(0,8)) +
+  scale_colour_gradientn(colours=c("#bdbdbd", "#a1d99b", "#00441b"), values=c(0, -log10(0.05), 6) / 6) +
+  ylab("Transmission Score") +
+  geom_hline(yintercept=0, size=0.2, alpha=0.6) +
+  # geom_hline(yintercept=1.645, size=0.2, alpha=0.6) +
+  # geom_hline(yintercept=2.33, size=0.2, alpha=0.6) +
+  # geom_hline(yintercept=3.09, size=0.2, alpha=0.6) +
+  scale_y_continuous(breaks=c(qnorm(0.01), qnorm(0.1), 0, -qnorm(10^(seq(-1, -23, by=-1)))), limits = c(-2.33, 10)) +
+  #scale_x_discrete(limits=rev(levels(my.data.taxa$Scientific_Name))) +
+  scale_x_discrete(limits=as.character(my.data.taxa$refOTUs)[order.use], labels=as.character(my.data.taxa$refOTUs)[order.use]) +
+  #coord_flip() +
+  theme_minimal() +
+  theme(
+    axis.text=element_blank(),
+#    axis.title = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank()
+    #panel.grid.major.x = element_blank(),
+#    legend.position = "none"
+  ) +
+  NULL
+p.transmission_scores
+```
+
+
+
+
+
+
+
+

@@ -1,0 +1,175 @@
+---
+title: "Confounder analysis of PDAC metaG data"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# packages
+library("tidyverse")
+library("matrixStats")
+library("SIAMCAT")
+library("ggrepel")
+
+PARAM <- list()
+PARAM$folder.R <- paste0(getwd(), "/")
+PARAM$folder <- gsub("Rmd/", "", PARAM$folder.R)
+PARAM$folder.metadata <- paste0(PARAM$folder, "metadata/")
+PARAM$folder.files <- paste0(PARAM$folder, "files/")
+PARAM$folder.Rdata <- paste0(PARAM$folder, "Rdata/")
+PARAM$folder.data <- paste0(PARAM$folder, "data/")
+PARAM$folder.results <- paste0(PARAM$folder, "results/metaG/")
+
+# load data
+# preprocess confounder variables to test later
+load(paste0(PARAM$folder.Rdata, "metag.pc.Rdata"))
+load(paste0(PARAM$folder.Rdata, "pc.st.naive.Rdata"))
+
+feat.rel <- get.filt_feat.matrix(siamcat)
+meta=as.data.frame(meta.st.cancer)
+
+meta <- meta %>%
+  # age
+  mutate(age_factor=as.factor(
+    cut(meta$age, breaks = quantile(meta$age), labels=c(1,2,3,4)))) %>%
+  # library size
+  mutate(lib_size_factor=as.factor(
+    cut(meta$library_size, breaks = quantile(meta$library_size),
+        labels=c(1,2,3,4))))%>%
+# totalB_comp
+  mutate(totalB_comp_factor=as.factor(
+    cut(meta$totalB_comp, breaks = quantile(meta$totalB_comp, na.rm=TRUE),
+        labels=c(1,2,3,4))))
+rownames(meta) <- rownames(meta.st.cancer)
+```
+
+```{r}
+#  variance explained by disease status
+ss.disease <- apply(feat.rel, 1, FUN=function(x, label){
+  rank.x <- rank(x)/length(x)
+  ss.tot <- sum((rank.x - mean(rank.x))^2)/length(rank.x)
+  ss.o.i <- sum(vapply(unique(label), function(l){
+    sum((rank.x[label==l] - mean(rank.x[label==l]))^2)
+  }, FUN.VALUE = double(1)))/length(rank.x)
+  return(1-ss.o.i/ss.tot)
+}, label=meta$status)
+
+# calculate trimmed mean abundance
+t.mean <- apply(feat.rel, 1, mean, trim=0.1)
+
+df.plot.all <- tibble(
+  species=rownames(feat.rel),
+  disease=ss.disease,
+  t.mean=t.mean,
+  adj.p.val=associations(siamcat)[,'p.adj'],
+  meta.significance=associations(siamcat)[,'p.adj'] < 0.05)
+
+var = c("stage","jaundice", "jaundice_imp","diabetes", "lib_size_factor", "center", 
+        "gender", "periodontitis", "age_factor", "smoking", "bilirubin_total", "totalB_comp_factor",
+        "alcohol_status", "obesitiy", "antibiotic", "metformin_med", "asthma", "acid", 
+        "rheumatoid arthritis", "allhburn", "cholesterol", "receding gums", "acid_med", 
+        "aspirin_med", "corticosteroids_med", "probiotic","coded_ca19")  
+###############################################################################
+# test all possible confounders
+df.list <- list()
+for (meta.var in var){
+  
+  cat('###############################\n', meta.var, '\n')
+  meta.c <- meta[!is.na(meta[[meta.var]]),]
+  
+  cat('After filtering, the distribution of variables is:\n')
+  print(table(meta.c$status, meta.c[[meta.var]]))
+  feat.red <- feat.rel[,rownames(meta.c)]
+  
+  cat('Calculating variance explained by meta-variable...\n')
+  ss.var <- apply(feat.red, 1, FUN=function(x, label){
+    rank.x <- rank(x)/length(x)
+    ss.tot <- sum((rank.x - mean(rank.x))^2)/length(rank.x)
+    ss.o.i <- sum(vapply(unique(label), function(l){
+      sum((rank.x[label==l] - mean(rank.x[label==l]))^2)
+    }, FUN.VALUE = double(1)))/length(rank.x)
+    return(1 - ss.o.i/ss.tot)
+  }, label=meta.c[[meta.var]])
+  df.plot.all[[meta.var]] <- ss.var
+  
+  cat('Calculating association with the meta-variable...\n')
+  if (length(unique(meta.c[[meta.var]]))  > 2){
+    meta.significance <- apply(feat.red, 1, FUN=function(x, var){
+      kruskal.test(x~as.factor(var))$p.value
+    }, var=meta.c[[meta.var]])
+  } else {
+    meta.significance <- apply(feat.red, 1, FUN=function(x, var){
+      wilcox.test(x~as.factor(var))$p.value
+    }, var=meta.c[[meta.var]])
+  }
+  meta.significance <- p.adjust(meta.significance, method='fdr')
+  df.plot.all[[paste0(meta.var, '.significance')]] <- meta.significance
+  cat('\n')
+}
+```
+
+```{r}
+# plot metadata variables
+g <- df.plot.all %>%
+  gather(key=type, value=meta, -species, -disease,
+         -t.mean, -adj.p.val, -meta.significance) %>%
+  filter(!str_detect(type, '.significance')) %>%
+  filter(complete.cases(.)) %>%
+  mutate(facet=case_when(type=='gender' ~ 'Gender',
+                         type=='age_factor' ~ 'Age',
+                         type=='center' ~ 'Center',
+                         type=='diabetes' ~ 'Diabetes',
+                         type=='metformin_med' ~ 'Metformin Usage',
+                         type=='obesitiy' ~ 'Obesitiy',
+                         type=='cholesterol' ~ 'Cholesterol',
+                         type=='jaundice' ~ 'Jaundice',
+                         type=='smoking' ~ 'Smoking',
+                         type=='bilirubin_direct' ~ 'Bilirubin',
+                         type=='bilirubin_total' ~ 'Bilirubin Total',
+                         type=='alcohol_status' ~ 'Alcohol Consumption',
+                         type=='periodontitis' ~ 'Periodontitis',
+                         type=='lib_size_factor' ~ 'Library Size',
+                         type=='stage' ~ 'PDAC progression',
+                         type=='jaundice_imp' ~ 'Jaundice imputed',
+                         type=='totalB_comp_factor' ~ 'Total bilirubin factor',
+                         type=='antibiotic' ~ 'Antibiotic',
+                         type=='acid' ~ 'Metformin usage',
+                         type=='asthma' ~ 'Asthma',
+                         type=='rheumatoid arthritis' ~ 'Rheumatoid arthritis',
+                         type=='allhburn' ~ 'Heart burn',
+                         type=='receding gums' ~ 'Receding gums',   
+                         type=='acid_med' ~ 'Acid medication',   
+                         type=='aspirin_med' ~ 'Aspirin usage',
+                         type=='probiotic' ~ 'Probiotic usage',   
+                         type=='corticosteroids_med' ~ 'Corticosteroids usage',
+                         type=='coded_ca19' ~ 'Binary CA19-9',
+                         TRUE ~ type)) %>%
+  
+  ggplot(aes(x=disease, y=meta, size=t.mean+1e-06, col=meta.significance)) +
+  geom_point() +
+  xlab('Variance explained by disease status') +
+  ylab('Variance explained by metadata variable') +
+  theme_bw() +
+  facet_wrap(~facet, ncol=4) +
+  theme(strip.background = element_blank(),
+        panel.grid.minor = element_blank()) +
+  scale_x_continuous(limits=c(0,0.3), breaks = seq(from=0, to=0.3, by=0.1)) + 
+  scale_y_continuous(limits=c(0,0.3), breaks = seq(from=0, to=0.3, by=0.1)) +
+  scale_colour_manual(values = alpha(c('black', '#CC071E'),
+                                     alpha=c(.3, .7)),
+                      name=paste0('Significance\n(', ' 1e-05 FDR)')) +
+  scale_size_area(name='Trimmed mean\nabundance',
+                  breaks=c(1e-05, 1e-03, 1e-02)) +
+  guides(size = "legend", colour='legend')
+
+  print(g)
+ggsave(g, filename = paste0(PARAM$folder.results, 'confounder_plot.pdf'),
+       width = 10, height = 15, useDingbats=FALSE)
+```
+
+```{r session_info}
+sessionInfo()
+```

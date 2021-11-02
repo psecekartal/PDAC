@@ -1,0 +1,315 @@
+---
+title: "Prepare fucntional data"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This file contains the functional analysis of pancreatic cancer metagenomics data. 
+
+```{r load the libraries, echo=FALSE, include=FALSE}
+library(car)
+library(readr)
+library(base)
+library(Biobase)
+library(ggplot2)
+library(RColorBrewer)
+library(tidyverse)
+library(reshape2)
+library(omixerRpm)
+library(pROC)
+library(ggrepel)
+library(infotheo)
+library(coin)
+```
+
+```{r set parameters}
+PARAM <- list()
+PARAM$folder.R <- paste0(getwd(), "/")
+PARAM$folder.Rdata <- paste0(PARAM$folder.R, "Rdata/")
+PARAM$folder.data <- paste0(PARAM$folder.R, "data/")
+PARAM$folder.results <- paste0(PARAM$folder.R, "results/")
+log.n0 = 1e-05 # taxa
+log.n0.func = 1e-08 # functions
+```
+
+```{r load the data}
+# load annotation files
+kegg.anno=read.table(paste0(PARAM$folder.data, '/functional/ko00001.keg'),
+                        sep='\t', quote='', stringsAsFactors = FALSE, header=TRUE)
+
+kegg.anno$names = paste0(kegg.anno$KO_number, kegg.anno$long_name)
+
+eggnog.anno <- read.table(paste0(PARAM$folder.data, 'functional/IGC_catalog-v1.0.0.emapper.annotations-v2.tsv'), 
+                          sep='\t', quote='', stringsAsFactors = FALSE, header=FALSE)[,c(1:2,10,13)]
+colnames(eggnog.anno) <- c("code", "code2", "name", "func")
+eggnog.anno$name <- substr(eggnog.anno$name, start = 1, stop = 5)
+
+# load taxanomic data
+load(paste0(PARAM$folder.data, "metag.pc.Rdata"))
+################################################################################
+# eggNOG
+bactNOG <- read.table(paste0(PARAM$folder.data, "eggnog.counts.all1.bactNOG.scaled.txt"), 
+    sep= "\t",  skip = 78, row.names = 1, header = T, stringsAsFactors = FALSE)
+# remove non-eligible samples
+feat.bactNOG <- bactNOG[,rownames(meta.total)]
+# split for stool and saliva
+feat.bactNOG.st <- feat.bactNOG[, rownames(meta.st)]
+feat.bactNOG.or <- feat.bactNOG[, rownames(meta.or)]
+
+NOG <- read.table(paste0(PARAM$folder.data, "eggnog.counts.all1.NOG.scaled.txt"), 
+    sep= "\t",  skip = 78, row.names = 1, header = T, stringsAsFactors = FALSE)
+# remove non-eligible samples
+feat.NOG <- NOG[,rownames(meta.total)]
+# split for stool and saliva
+feat.NOG.st <- feat.NOG[, rownames(meta.st)]
+feat.NOG.or <- feat.NOG[, rownames(meta.or)]
+
+# KEGG
+kegg <-read.table(paste0(PARAM$folder.data, "kegg.counts.all1.scaled.txt"), 
+   sep= "\t",  skip = 78, row.names = 1, header = T, stringsAsFactors = FALSE)
+# remove non-eligible samples
+feat.kegg <- kegg[,rownames(meta.total)]
+# split for stool and saliva
+feat.kegg.st <- feat.kegg[, rownames(meta.st)]
+feat.kegg.or <- feat.kegg[, rownames(meta.or)]
+```
+
+###############################################################################
+Filter functional prfiles with abundance and prevelance filter
+###############################################################################
+
+```{r}
+# apply abundance and prevalance filter  
+filtering <- function(featTable, fileName, prev){
+    # check if all ids are matching
+    identical(rownames(meta.total), colnames(featTable))
+    df= as.matrix(featTable)
+    # remove -1 unmapped fraction
+    rownames(df)[1] -> remove
+    df <- df[!rownames(df) %in% remove, ]
+    # relative abundance normalization
+    df <- prop.table(as.matrix(df), 2)
+    print(dim(df))
+    # abundance filter: remove features less than 1e-05 abundance of samples
+    df=df[(df >= 10^-5) >= prev, ]
+    print(dim(df))
+    
+    write.table(df, file=paste0(PARAM$folder.results, fileName,'.tsv'), 
+                sep='\t', quote=FALSE, row.names=TRUE, col.names=TRUE)
+}
+################################################################################
+# run filtering function
+filtering(feat.bactNOG.st, "feat.st.rel.filtered.bactNOG.15prev", prev=15)
+filtering(feat.NOG.st, "feat.st.rel.filtered.NOG.15prev", prev=15)
+filtering(feat.kegg.st, "functional/feat.st.rel.filtered.kegg.15prev", prev=15)
+
+filtering(feat.bactNOG.or, "feat.or.rel.filtered.bactNOG.5rev", prev=15)
+filtering(feat.NOG.or, "feat.or.rel.filtered.NOG.15prev", prev=15)
+filtering(feat.kegg.or, "feat.or.rel.filtered.kegg.15prev", prev=15)
+```
+
+```{r}
+# read the files
+folder.data <- paste0(PARAM$folder.data)
+temp = list.files(path=PARAM$folder.data, pattern=c("^feat." ))
+for (i in 1:length(temp)) assign(temp[i], read.csv(paste0(PARAM$folder.data, temp[i]), 
+                                                   sep = "\t",
+                                                   row.names=1))
+```
+
+################################################################################
+Calculate Wilcoxon Test 
+################################################################################
+
+```{r}
+calWilcox <- function(featTable, metaTable, fileName, fileLoc, threshold, log.n){
+  # prepare matrix
+  df = featTable[, rownames(metaTable)]
+  df <- df[!rownames(df)=="-1", , drop = FALSE]
+
+  metaTable$ID = rownames(metaTable)
+  p.val <- matrix(NA, nrow=nrow(featTable), ncol=1, 
+                dimnames=list(row.names(featTable)))
+  fc <- p.val
+  aucs.mat <- p.val
+  aucs.all  <- vector('list', nrow(featTable))
+  ##############################################################################
+  # calculate wilcoxon test and effect size for each feature
+  for (f in row.names(featTable)) {
+    
+    x <- as.numeric(featTable[f, metaTable %>% 
+                                filter(status=='PC') %>% pull(ID)])
+    y <- as.numeric(featTable[f, metaTable %>% 
+                                filter(status=='CTR') %>% pull(ID)])
+    
+    # Wilcoxon
+    p.val[f,1] <- wilcox.test(x, y, exact=FALSE)$p.value
+    
+    # AUC
+    aucs.all[[f]][[1]]  <- c(roc(controls=y, cases=x, 
+                                direction='<', ci=TRUE, auc=TRUE)$ci)
+    aucs.mat[f,1] <- c(roc(controls=y, cases=x, 
+                           direction='<', ci=TRUE, auc=TRUE)$ci)[2]
+    
+    # FC
+    q.p <- quantile(log10(x+log.n), probs=seq(.1, .9, .05), na.rm=TRUE) 
+    q.n <- quantile(log10(y+log.n), probs=seq(.1, .9, .05), na.rm=TRUE)
+    fc[f,1] <- sum(q.p - q.n)/length(q.p)
+  }
+  
+  ##############################################################################
+  # fdr correction
+  p.adj <- data.frame(apply(p.val, MARGIN=2, FUN=p.adjust, method="fdr"),
+                    check.names = FALSE)
+  #p.adj <- p.adj[!is.na(p.adj$all),]
+  colnames(p.adj) <- "adj"
+  # add fc and auc
+  fc <- fc[rownames(p.adj),]
+  p.adj$p.val <- p.val
+  p.adj$fc <- fc
+  # log2 of fc
+  p.adj$log2fc[p.adj$fc==0] = log2(1)
+  #If number < 0 then take log2 of absolute value 
+  # and assign the negative number to it
+  p.adj$log2fc[p.adj$fc< 0] = -log2(abs(p.adj$fc[p.adj$fc <0]))
+  #If number > 0 then take log2 of the number
+  p.adj$log2fc[p.adj$fc> 0] = log2(p.adj$fc[p.adj$fc >0])
+  p.adj$auc.mat <- aucs.mat
+  p.adj$log10p = -log10(as.numeric(p.adj$adj))
+  p.adj=as.data.frame(p.adj)
+  p.adj$species <-  rownames(p.adj)
+  p.adj$significant <- ifelse(p.adj$adj < threshold,  "p.adj < 0.05", "not sig")
+  # save file
+  write.table(p.adj, file=paste0(PARAM$folder.files, fileLoc, fileName, 'p.adj.tsv'), 
+                sep='\t', quote=FALSE, row.names=TRUE, col.names=TRUE)
+  
+  return(p.adj)
+}
+################################################################################
+# use 1e-05 for species & 1e-08 for fucntional
+p.adj.kegg.st.15 <- calWilcox(feat.st.rel.filtered.kegg.15prev.tsv, meta.st.cancer, 
+                           "st.wilcox.kegg.15prev.", "/functional/", 0.05, log.n0.func)
+
+p.adj.kegg.or.15 <- calWilcox(feat.or.rel.filtered.kegg.15prev.tsv, meta.or.cancer, 
+                           "or.wilcox.kegg.15prev", "/functional/", 0.05, log.n0.func)
+
+p.adj.bact.st.15 <- calWilcox(feat.st.rel.filtered.bactNOG.15prev.tsv, meta.st.cancer, 
+                           "st.wilcox.bactNOG.15prev.", "/functional/", 0.05, log.n0.func)
+
+p.adj.bact.or.15 <- calWilcox(feat.or.rel.filtered.bactNOG.15prev.tsv, meta.or.cancer, 
+                           "or.wilcox.bactNOG.15prev.", "/functional/", 0.05, log.n0.func)
+################################################################################
+# add kegg name
+listdf.kegg=list(p.adj.kegg.st.15, p.adj.kegg.or.15)
+
+for (i in 1:length(listdf.kegg)) {
+  df <- listdf.kegg[[i]]
+  print(i)
+  df= cbind(rownames(df), df)
+  df$longname = kegg.anno$long_name[match(rownames(df), kegg.anno$KO_number)] 
+  df$species <- paste0(rownames(df), '_', df$longname)
+  listdf.kegg[[i]] <- df
+  return(listdf.kegg[[i]])
+}
+
+# add names to list
+groups = sample(c("p.adj.kegg.st.15", "p.adj.kegg.or.15"))
+listdf.kegg = split(listdf.kegg, f = groups)
+
+# add eggnog name
+listdf.bact=list(p.adj.bact.or.15, p.adj.bact.st.15)
+
+for (i in 1:length(listdf.bact)) {
+  df <- listdf.bact[[i]]
+  df= cbind(rownames(df), df)
+  df$name = eggnog.anno$func[match(rownames(df), eggnog.anno$name)] 
+  rownames(df) <- paste0(rownames(df), '_', df$name)
+  df$species <- substr(rownames(df), start=1, stop=50)
+  listdf.bact[[i]] <- df
+  return(listdf.bact[[i]])
+}
+#add names to list
+groups = sample(c("p.adj.bact.or.15", "p.adj.bact.st.15"))
+listdf.bact = split(listdf.bact, f = groups)
+```
+
+################################################################################
+## Plot wilcoxon test results
+################################################################################
+
+```{r}
+# plot the differentially abundant functions
+  plotdif <- function(fileName, plotname){
+  p <- ggplot(fileName, aes(x = fc, y = log10p)) +
+  geom_point(aes(color = significant), alpha = 1, size = 4) +
+  scale_color_manual(values = c("black","red")) +
+  theme_bw(base_size = 20) +
+  geom_text_repel(data = subset(fileName, adj < 0.05),
+                  aes(label = species),
+                  size = 2,
+                  box.padding = unit(0.2, "lines"),
+                  point.padding = unit(0.2, "lines")) +
+  ggtitle("Differentially abundant functions/genes") +
+  xlab("log2 fold change") +
+  ylab("log10 adjusted p-value")
+  p
+  # save the plot
+  ggsave(p, filename=paste0(PARAM$folder.results, "functional/",
+                            plotname,
+                            "volcano.pdf"),
+         width = 10, height=10)
+  print(p)
+  } 
+
+plotdif(as.data.frame(listdf.kegg$p.adj.kegg.st.15), "st.wilcox.kegg.prev15.")
+plotdif(as.data.frame(listdf.kegg$p.adj.kegg.or.15), "or.wilcox.kegg.prev15.")
+plotdif(as.data.frame(listdf.bact$p.adj.bact.st.15), "st.wilcox.bact.prev15.")
+plotdif(as.data.frame(listdf.bact$p.adj.bact.or.15), "or.wilcox.bact.prev15.")
+```
+
+```{r}
+listdf.bact = list(st.nog.15prev=feat.st.rel.filtered.bactNOG.15prev.tsv, 
+                   or.nog.15prev=feat.or.rel.filtered.bactNOG.15prev.tsv)
+     
+for (i in 1:length(listdf.bact)) {
+  df <- as.data.frame(listdf.bact[[i]])
+  #df= cbind(rownames(df), df)
+  df$temp <- make.names(eggnog.anno$func[match(rownames(df), eggnog.anno$name)], unique=TRUE)
+  rownames(df) <- paste0(rownames(df), '_', df$temp)
+  df$temp <- NULL
+  rownames(df) <- substr(rownames(df), start=1, stop=40)
+  listdf.bact[[i]] <- df
+  return(listdf.bact[[i]])
+}
+
+listdf.kegg = list(
+     st.kegg.15prev=feat.st.rel.filtered.kegg.15prev.tsv, 
+     or.kegg.15prev=feat.or.rel.filtered.kegg.15prev.tsv,
+     or.nog.15prev=feat.or.rel.filtered.NOG.15prev.tsv, 
+     st.nog.15prev=feat.st.rel.filtered.NOG.15prev.tsv)
+
+for (i in 1:length(listdf.kegg)) {
+  df <- listdf.kegg[[i]]
+  df= cbind(rownames(df), df)
+  rownames(df) <- make.names(kegg.anno$names
+                             [match(rownames(df), 
+                                    kegg.anno$KO_number)],
+                             unique=TRUE)
+  listdf.kegg[[i]] <- df
+  return(listdf.kegg[[i]])
+}
+
+# save files
+save(listdf.kegg, listdf.bact, st.gmm, or.gmm, file=paste0(PARAM$folder.Rdata, "metag.pc.genes.Rdata"))
+
+# save calcutaions
+save(p.adj.gmm.or, p.adj.gmm.st, listdf.bact, listdf.kegg,
+     file=paste0(PARAM$folder.Rdata, "p.adj.genes.Rdata"))
+```
+
+```{r session_info}
+sessionInfo()
+```

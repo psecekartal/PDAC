@@ -1,0 +1,214 @@
+---
+title: 'Oral-Fecal Transmission: Prepare Abundance Data'
+author: "Sebastian Schmidt"
+date: "10/1/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(stringsAsFactors = FALSE)
+```
+
+## Introduction
+
+Several microbes that are enriched in the feces or tumour tissue of pancreatic cancer patients have been hypothesized to be of oral provenance. To test whether microbes from the oral cavity indeed seed the gut to a larger extent in PC patients relative to healthy controls, we track microbial SNVs between salivary and fecal samples, as a proxy for intra-individual strain populations.
+
+In this document, steps are detailed to pre-filter the dataset based on taxa (`mOTU`) abundance and genome coverage information. Moreover, all necessary data and metadata is loaded, filtered, and stored in the appropriate formats.
+
+## Prepare Environment
+
+Load packages, set relevant folder and file paths, define parameters, etc.
+
+```{r Load Libraries, echo=F}
+library("parallel", warn.conflicts=F, quietly=T)
+library("Matrix", warn.conflicts=F, quietly=T)
+library("Matrix.utils", warn.conflicts=F, quietly=T)
+library("vegan", warn.conflicts=F, quietly=T)
+library("reshape2", warn.conflicts=F, quietly=T)
+library("readxl", warn.conflicts=F, quietly=T)
+library("ggplot2", warn.conflicts=F, quietly=T)
+library("readr", warn.conflicts=F, quietly=T)
+library("dplyr", warn.conflicts=F, quietly=T)
+```
+
+
+```{r Set Parameters, echo=F}
+#Preallocate global data structures
+PARAM <- list();
+
+#Set relevant folder names
+PARAM$folder.Rmd <- paste0(getwd(), "/")
+PARAM$folder.base <- gsub("Rmd/", "", PARAM$folder.Rmd)
+PARAM$folder.data <- paste0(PARAM$folder.base, "data/")
+PARAM$folder.metadata <- paste0(PARAM$folder.base, "metadata/")
+PARAM$folder.parameters <- paste0(PARAM$folder.base, "parameters/")
+PARAM$folder.results <- paste0(PARAM$folder.base, "results/")
+```
+
+## Load and Process Data
+
+First, load sample metadata.
+
+```{r}
+file.data_sample <- paste0(PARAM$folder.metadata, "2019.07.04.metadata.Rdata")
+load(file.data_sample)
+data.sample <- metadata.g
+
+# data.sample <- read.delim(file.data_sample, header = T)
+# data.sample$sample_alias <- as.character(data.sample$sample_alias)
+# rownames(data.sample) <- data.sample$sample_alias
+# head(data.sample)
+```
+
+Re-level relavant factors in `data.sample`.
+
+```{r}
+data.sample$body_site <- factor(data.sample$environment_material, labels=c("saliva", "feces"), levels =c("saliva [ENVO:02000036]", "feces [ENVO:00002003]"), ordered = T)
+data.sample$center <- factor(data.sample$center, labels=c("center_VdH", "center_RyC"), levels =c(2,8), ordered = T)
+data.sample$sex <- factor(data.sample$gender, labels=c("F", "M"), levels =c(0, 1), ordered = T)
+data.sample$status <- factor(data.sample$subject_disease_status, labels=c("CTR", "Pancreatitis", "PC"), levels =c("CTR", "Pancreatitis", "PC"), ordered = T)
+data.sample$smoker <- factor(data.sample$smoker, labels=c("non-smoker", "smoker"), levels =c(0, 1), ordered = T)
+data.sample$alcohol <- factor(data.sample$alcohol_status, labels=c("non-drinker", "ever_drinker"), levels =c(0, 1), ordered = T)
+data.sample$comorbidity.diabetes <- factor(data.sample$alldiab, labels=c("no diabetes", "diabetes"), levels =c(0, 1), ordered = T)
+data.sample$comorbidity.obesity <- factor(data.sample$obese, labels=c("not obese", "obese"), levels =c(0, 1), ordered = T)
+data.sample$comorbidity.asthma <- factor(data.sample$asthma, labels=c("no asthma", "asthma"), levels =c(0, 1), ordered = T)
+data.sample$comorbidity.rhinitis <- factor(data.sample$nasal, labels=c("no rhinitis", "rhinitis"), levels =c(0, 1), ordered = T)
+data.sample$comorbidity.heartburn <- factor(data.sample$allhburn, labels=c("no heartburn", "heartburn"), levels =c(0, 1), ordered = T)
+data.sample$comorbidity.acid_regurgitation <- factor(data.sample$allacid, labels=c("no regurgitation", "regurgitation"), levels =c(0, 1), ordered = T)
+data.sample$comorbidity.high_blood_pressure <- factor(data.sample$allhbp, labels=c("normal blood pressure", "high blood pressure"), levels =c(0, 1), ordered = T)
+data.sample$comorbidity.cholesterol <- factor(data.sample$cholesterol, labels=c("normal cholesterol", "high cholesterol"), levels =c(0, 1), ordered = T)
+data.sample$comorbidity.periodontitis <- factor(data.sample$periodontitis, labels=c("no periodontitis", "periodontitis"), levels =c(0, 1), ordered = T)
+data.sample$comorbidity.receding_gums <- factor(data.sample$recession, labels=c("no receding gums", "receding gums"), levels =c(0, 1), ordered = T)
+data.sample$comorbidity.jaundice <- factor(data.sample$jaundice, labels=c("no jaundice", "jaundice"), levels =c("no", "yes"), ordered = T)
+data.sample$medication.acid_heartburn <- factor(data.sample$abmedication, labels=c("no abmed", "abmed"), levels =c(0, 1), ordered = T)
+data.sample$medication.antibiotic <- factor(data.sample$antibiotic, labels=c("no abx", "abx"), levels =c(0, 1), ordered = T)
+data.sample$medication.anti_inflammatory <- factor(data.sample$asparmed, labels=c("no anti-inflammatories", "anti-inflammatories"), levels =c(0, 1), ordered = T)
+data.sample$medication.aspirin <- factor(data.sample$salicylic.ever, labels=c("no aspirin", "aspirin"), levels =c(0, 1), ordered = T)
+data.sample$medication.paracetamol <- factor(data.sample$paracetamol.ever, labels=c("no paracetamol", "paracetamol"), levels =c(0, 1), ordered = T)
+data.sample$medication.corticoid <- factor(data.sample$cortmed, labels=c("no corticosteroids", "corticosteroids"), levels =c(0, 1), ordered = T)
+data.sample$medication.cholesterol <- factor(data.sample$cholmedication, labels=c("no cholesterol medication", "cholesterol medication"), levels =c(0, 1), ordered = T)
+data.sample$medication.nsaid <- factor(data.sample$nsaidmed, labels=c("no NSAID medication", "NSAID medication"), levels =c(0, 1), ordered = T)
+data.sample$medication.diabetes <- factor(data.sample$diabmed, labels=c("no diabetes medication", "diabetes medication"), levels =c(0, 1), ordered = T)
+data.sample$medication.insulin <- factor(data.sample$diabin, labels=c("no insulin", "insulin"), levels =c(0, 1), ordered = T)
+data.sample$medication.metformin <- factor(data.sample$metformin.ever, labels=c("no diabetes", "no metformin", "metformin"), levels =c("no diabetes", "no metformin use", "metformin use"), ordered = T)
+data.sample$medication.probiotics <- factor(data.sample$probiot, labels=c("no probiotics", "probiotics"), levels =c(0, 1), ordered = T)
+data.sample$bilirrubine.total <- data.sample$`bilirrubina total (mg/dl)`
+data.sample$bilirrubine.direct <- data.sample$`bilirrubina directa (mg/dl)`
+
+data.sample %>%
+  select(sample_alias, subject_id, experiment_name, read_count, aliases.x, body_site, sex, age_years, center, status, smoker, alcohol, comorbidity.diabetes, comorbidity.obesity, comorbidity.asthma, comorbidity.rhinitis, comorbidity.heartburn, comorbidity.acid_regurgitation, comorbidity.high_blood_pressure, comorbidity.cholesterol, comorbidity.periodontitis, comorbidity.receding_gums, comorbidity.jaundice, medication.acid_heartburn, medication.anti_inflammatory, medication.aspirin, medication.paracetamol, medication.nsaid, medication.antibiotic, medication.corticoid, medication.cholesterol, medication.diabetes, medication.insulin, medication.metformin, medication.probiotics, bilirrubine.total, bilirrubine.direct, cpy1) -> data.sample
+data.sample <- data.sample[!is.na(rownames(data.sample)) & rownames(data.sample) != "NA", ]
+```
+
+Load global taxonomy mapping (full taxonomy per specI cluster).
+
+```{r}
+file.specI_taxonomy <- paste0(PARAM$folder.data, "prok-refdb-v11.0.0_specI-v2_taxonomy_v2UL.map")
+data.taxonomy.full <- as.data.frame(read_delim(file.specI_taxonomy, "\t", escape_double = FALSE, trim_ws = TRUE))
+data.taxonomy.full$repID <- sapply(strsplit(data.taxonomy.full$repGenome, " "), function(x) {x[[1]]})
+head(data.taxonomy.full)
+```
+
+Parse mOTU abundance table.
+
+```{r}
+#Parse table
+file.data_mOTU <- paste0(PARAM$folder.data, "all_samples.motusv2.insertcount_2mg.tsv")
+data.mOTU.raw <- as.matrix(read.delim(file.data_mOTU, sep="\t", comment.char="#", row.names = 1))
+
+#Extract mOTU names and IDs from row names
+mOTU.names <- gsub(" \\[.+", "", rownames(data.mOTU.raw), perl = T)
+mOTU.IDs <- gsub(".+ \\[", "", rownames(data.mOTU.raw), perl = T); mOTU.IDs <- gsub("\\]", "", mOTU.IDs, perl=T)
+rownames(data.mOTU.raw) <- mOTU.IDs
+
+#Normalize counts
+data.mOTU.raw.rel <- t(t(data.mOTU.raw) / colSums(data.mOTU.raw))
+
+#Force column sorting to match data.sample
+data.mOTU.raw <- data.mOTU.raw[, rownames(data.sample)]
+data.mOTU.raw.rel <- data.mOTU.raw.rel[, rownames(data.sample)]
+
+#Integrate by representative tax ID
+mOTU.IDs.profilable <- intersect(mOTU.IDs, data.taxonomy.full$ref_mOTU_cluster)
+data.mOTU.raw.rel.tax_id <- rowsum(data.mOTU.raw.rel[mOTU.IDs %in% mOTU.IDs.profilable, ], group = data.taxonomy.full[match(mOTU.IDs.profilable, data.taxonomy.full$ref_mOTU_cluster), "repID"])
+```
+
+Parse horizontal and vertical coverate tables
+
+```{r}
+#Read vertical coverage
+file.ver_cov <- paste0(PARAM$folder.data, "metaSNV_v01.all_cov.tab.gz")
+ver_cov.tmp <- read.delim(file.ver_cov, row.names = 1, stringsAsFactors = F, header=T)
+ver_cov.raw <- apply(as.matrix(ver_cov.tmp[2:nrow(ver_cov.tmp), ]), 2, as.numeric)
+rownames(ver_cov.raw) <- rownames(ver_cov.tmp)[2:nrow(ver_cov.tmp)]
+ver_cov.raw <- ver_cov.raw[rownames(data.mOTU.raw.rel.tax_id), ]
+
+#Read horizontal coverage
+file.hor_cov <- paste0(PARAM$folder.data, "metaSNV_v01.all_perc.tab.gz")
+hor_cov.tmp <- read.delim(file.hor_cov, row.names = 1, stringsAsFactors = F, header=T)
+hor_cov.raw <- apply(as.matrix(hor_cov.tmp[2:nrow(hor_cov.tmp), ]), 2, as.numeric) / 100
+rownames(hor_cov.raw) <- rownames(hor_cov.tmp)[2:nrow(hor_cov.tmp)]
+hor_cov.raw <- hor_cov.raw[rownames(data.mOTU.raw.rel.tax_id), ]
+
+#Re-format column names to match sample IDs
+names.cov <- gsub(".ULRep.+", "", colnames(ver_cov.raw), perl=T)
+colnames(ver_cov.raw) <- colnames(hor_cov.raw) <- names.cov
+
+#Force column order to match data.sample
+ver_cov.raw <- ver_cov.raw[, rownames(data.sample)]
+hor_cov.raw <- hor_cov.raw[, rownames(data.sample)]
+```
+
+Filter eligible taxa based on the following criteria:
+
+* detection at >10^-5 in at least 4 samples
+* avg vertical coverate at >0.1 in at least 4 samples
+* horizontal coverage at >0.01 in at least 4 samples
+
+```{r}
+keep.by_prevalence <- rowSums(data.mOTU.raw.rel.tax_id > 10^-5) > 0
+keep.by_depth <- rowSums(ver_cov.raw > 0.1) > 0
+keep.by_breadth <- rowSums(hor_cov.raw > 0.01) > 0
+
+#Apply filters
+ver_cov <- ver_cov.raw[keep.by_prevalence & keep.by_depth & keep.by_breadth, ]
+hor_cov <- hor_cov.raw[keep.by_prevalence & keep.by_depth & keep.by_breadth, ]
+data.mOTU.rel <- data.mOTU.raw.rel.tax_id[keep.by_prevalence & keep.by_depth & keep.by_breadth, ]
+
+#Filter taxonomy
+#data.taxonomy <- unique(data.taxonomy.full[data.taxonomy.full$repID %in% rownames(data.mOTU.rel), 3:ncol(data.taxonomy.full)])
+data.taxonomy <- unique(data.taxonomy.full[data.taxonomy.full$repID %in% rownames(data.mOTU.rel), ])
+data.taxonomy <- data.taxonomy %>% distinct(repID, .keep_all = T)
+rownames(data.taxonomy) <- data.taxonomy$repID
+```
+
+After these filtering steps, we retain `r sum(keep.by_prevalence & keep.by_depth & keep.by_breadth)` taxa. These account for almost the entire reference-tractable variance:
+
+```{r}
+summary(colSums(data.mOTU.rel)) / summary(colSums(data.mOTU.raw.rel.tax_id))
+```
+
+These are the distributions by taxonomy, per level:
+
+```{r}
+sort(table(data.taxonomy$phylum), decreasing = T)
+sort(table(data.taxonomy$class), decreasing = T)
+sort(table(data.taxonomy$order), decreasing = T)[1:10]
+sort(table(data.taxonomy$family), decreasing = T)[1:10]
+sort(table(data.taxonomy$genus), decreasing = T)[1:10]
+```
+
+Store data and export list of taxa for SNV processing.
+
+```{r}
+save(data.sample, file=paste0(PARAM$folder.metadata, "metaG.oral_fecal.data_sample.Rdata"))
+save(data.mOTU.rel, file=paste0(PARAM$folder.data, "metaG.oral_fecal.data_mOTU_rel.Rdata"))
+save(ver_cov, hor_cov, file=paste0(PARAM$folder.data, "metaG.oral_fecal.data_coverage.Rdata"))
+save(data.taxonomy, file=paste0(PARAM$folder.data, "metaG.oral_fecal.data_taxonomy.Rdata"))
+
+writeLines(rownames(data.mOTU.rel), con=paste0(PARAM$folder.parameters, "metaG.oral_fecal.tax_ids_abd.txt"), sep = "\n")
+```
+
+
+

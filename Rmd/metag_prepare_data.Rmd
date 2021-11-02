@@ -1,0 +1,86 @@
+---
+title: "Clean pancreatic cancer dataset"
+output: html_document
+---
+This document outlines the pancreatic cancer metagenomics data.
+Data contains 100 saliva and 136 stool metagenomics sequencing results. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+set.seed("3456")
+```
+
+```{r warning=FALSE, message=FALSE}
+# load library
+require(gtools)
+require(readr)
+require(tidyverse)
+require(readxl)
+
+# Set parameters
+PARAM <- list()
+PARAM$folder.R <- paste0(getwd(), "/")
+PARAM$folder <- gsub("Rmd/", "", PARAM$folder.R)
+PARAM$folder.Rdata <- paste0(PARAM$folder, "Rdata/")
+```
+
+```{r loadData and clean, message=FALSE, warning=FALSE}
+# load metadata
+load(paste0(PARAM$folder.Rdata, "metag.pc.metadata.Rdata"))
+load(paste0(PARAM$folder.Rdata, "metag.pc.metadata.imputed.Rdata"))
+# load taxonomic profile
+load(paste0(PARAM$folder.Rdata, "data.table.metag.Rdata"))
+
+# clean the table
+dim(motu.abs.3mg)
+# calculate relative abundance
+motu.rel.3mg <- prop.table(as.matrix(motu.abs.3mg), 2)
+motu.rel.3mg <- motu.rel.3mg[rowSums(motu.rel.3mg >= 10^-5) >= 2, ]
+dim(motu.rel.3mg)
+```
+
+```{r split metadata, message=FALSE, warning=FALSE}
+#meta.total <- complete.cases(meta.total)# subset metadata
+meta.or = subset(meta.total,
+                 meta.total$environment_material=="saliva [ENVO:02000036]")
+meta.st = subset(meta.total, 
+                 meta.total$environment_material=="feces [ENVO:00002003]")
+meta.st.cancer = subset(meta.total, 
+                        meta.total$status!="Pancreatitis" & 
+                        meta.total$environment_material=="feces [ENVO:00002003]")
+meta.or.cancer = subset(meta.total, 
+                        meta.total$status!="Pancreatitis" & 
+                        meta.total$environment_material=="saliva [ENVO:02000036]")
+meta.st.pc = subset(meta.total, 
+                    meta.total$status!="PC" & 
+                    meta.total$environment_material=="feces [ENVO:00002003]")
+meta.or.pc = subset(meta.total, 
+                    meta.total$status!="PC" & 
+                    meta.total$environment_material=="saliva [ENVO:02000036]")
+meta.total.cancer = rbind(meta.st.cancer, meta.or.cancer)
+
+meta.or.temp = subset(meta.total, 
+                 meta.total$environment_material=="saliva [ENVO:02000036]")
+meta.st.temp = subset(meta.total, 
+                 meta.total$environment_material=="feces [ENVO:00002003]")
+```
+
+```{r}
+# subset otu profiles
+feat.st.rel.cancer.3mg <- motu.rel.3mg[, match(rownames(meta.st.cancer),
+                                               colnames(motu.rel.3mg))]
+feat.or.rel.cancer.3mg <- motu.rel.3mg[, match(rownames(meta.or.cancer),
+                                               colnames(motu.rel.3mg))]
+feat.st.rel.pc.3mg <- motu.rel.3mg[, match(rownames(meta.st.pc),
+                                           colnames(motu.rel.3mg))]
+feat.or.rel.pc.3mg <- motu.rel.3mg[, match(rownames(meta.or.pc),
+                                           colnames(motu.rel.3mg))]
+```
+
+```{r save files, message=FALSE}
+save.image(paste0(PARAM$folder.Rdata, "metag.pc.Rdata"))
+```
+
+```{r session_info}
+sessionInfo()
+```

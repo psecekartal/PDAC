@@ -1,0 +1,1167 @@
+---
+title: "Analysis Tissue & Serum Data"
+author: "Sebastian Schmidt"
+date: "2019-06-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#Make R behave slightly less stupid
+options(stringsAsFactors = FALSE)
+```
+
+## Introduction
+
+Analyse trends in taxonomic profiles, local ("alpha") and between-sample ("beta") taxonomic diversity for tissue and serum samples. The following questions are addressed:
+
+* Are tissue samples significantly different from extraction controls? Which OTUs/taxa overlap?
+* Do pancreatic tumor tissue samples differ from healthy tissue?
+* Which OTUs are enriched in tissue cultivation samples?
+* Are blood serum samples significantly different from extraction controls?
+* Do blood serum samples differ between cases and controls?
+* Which individual OTUs can be traced within subjects across sites (saliva - blood serum - duodenum - pancreas - feces)?
+
+Individual analyses are discussed in detail below.
+
+## Prepare Environment
+
+```{r Load Libraries, echo=F}
+library("parallel", warn.conflicts=F, quietly=T)
+library("Matrix", warn.conflicts=F, quietly=T)
+library("vegan", warn.conflicts=F, quietly=T)
+library("ape", warn.conflicts=F, quietly=T)
+library("reshape2", warn.conflicts=F, quietly=T)
+library("dplyr", warn.conflicts=F, quietly=T)
+library("ggplot2", warn.conflicts=F, quietly=T)
+library("tidyverse", warn.conflicts=F, quietly=T)
+library("readxl", warn.conflicts=F, quietly=T)
+library("janitor", warn.conflicts=F, quietly=T)
+library("decontam", warn.conflicts=F, quietly=T)
+```
+
+Set file names and basic parameters.
+
+```{r Set Parameters}
+#Preallocate global data structures
+PARAM <- list()
+
+#Set relevant folder names
+PARAM$folder.Rmd <- paste0(getwd(), "/")
+PARAM$folder.base <- gsub("Rmd/", "", PARAM$folder.Rmd)
+PARAM$folder.data <- paste0(PARAM$folder.base, "data/")
+PARAM$folder.results <- paste0(PARAM$folder.base, "results/")
+
+#Sample data
+PARAM$file.sample <- paste0(PARAM$folder.data, "16S.data.sample.Rdata")
+#Count table data
+PARAM$file.otu <- paste0(PARAM$folder.data, "16S.data.otu.Rdata")
+PARAM$file.asv <- paste0(PARAM$folder.data, "16S.data.asv.Rdata")
+#Count table and beta div data
+PARAM$file.beta_div <- paste0(PARAM$folder.data, "16S.data.beta_div.Rdata")
+#Codified FISH results
+PARAM$file.fish <- paste0(PARAM$folder.base, "FISH/data.FISH.coded.xlsx")
+```
+
+Load data.
+
+```{r}
+load(PARAM$file.sample)
+load(PARAM$file.otu)
+load(PARAM$file.asv)
+load(PARAM$file.beta_div)
+```
+
+Parse codified FISH data.
+
+```{r}
+data.fish <- read_xlsx(PARAM$file.fish)
+data.fish %>% select(-1) %>% gather("genus", "value", -sample_alias, na.rm=T) -> data.fish
+```
+
+Remove three `pancreatic_duct` samples from downstream analyses.
+
+```{r}
+keep.samples <- !grepl("127-HT", data.sample$sample_alias)
+
+data.sample <- data.sample[keep.samples, ]
+data.otu <- data.otu[, keep.samples]
+data.otu.rel <- data.otu.rel[, keep.samples]
+data.asv <- data.asv[, keep.samples]
+data.asv.rel <- data.asv.rel[, keep.samples]
+```
+
+## Analyse and Correct for Extraction Controls
+
+Each set of tissue and serum extractions was accompanied by extraction blanks. In total, there are 11 negative control samples, 3 for pancreatic tissue and 8 for blood serum. What are the taxonomic profiles of these extraction blanks?
+
+```{r}
+#Select negative_control samples
+ctr.samples <- rownames(data.sample)[data.sample$material %in% c("blood_plasma.negative_control", "pancreas.negative_control")]
+
+#Subset OTU table
+ctr.ot <- data.otu.rel[, ctr.samples]
+ctr.ot <- ctr.ot[rowSums(ctr.ot) > 0, ]
+
+#Get the top OTUs observed in neg controls
+ctr.ot.sizes <- rowSums(ctr.ot)
+ctr.tax <- data.taxonomy[rownames(ctr.ot), ]
+ctr.tax$prevalence.neg_control <- rowSums(ctr.ot > 0) / ncol(ctr.ot)
+ctr.tax$mean_abd.neg_control <- ctr.ot.sizes / ncol(ctr.ot)
+head(ctr.tax[order(ctr.ot.sizes, decreasing = T), ], 20)
+```
+
+Compare taxa richness of extraction controls and actual samples.
+
+```{r, fig.width=12, fig.height=12}
+data.sample %>%
+  ggplot(aes(x=material, y=q.0, colour=material, fill=material)) +
+    geom_boxplot(fill=NA, outlier.colour = NA, colour="grey", alpha=0.6) +
+    geom_jitter(alpha=0.8, width = 0.2, size=2) +
+    scale_color_brewer(palette = "Paired") +
+    ylab("OTU richness, rarefied to 500 reads") +
+    coord_flip() +
+    theme_minimal()
+```
+
+Do samples cluster with their respective negative controls by community composition?
+
+```{r, fig.width=12, fig.height=12}
+#Define current sample set (exclude feces, saliva and cultivated samples)
+curr.samples <- rownames(data.sample)[!data.sample$material %in% c("feces", "saliva", "duodenum.cultivation", "pancreas.cultivation", "pancreas_tumor.cultivation")]
+
+#Get current pairwise sample dissimilarities
+curr.beta_div <- beta.div[["Bray_Curtis"]][curr.samples, curr.samples]
+
+#Perform PCoA
+curr.pcoa <- pcoa(curr.beta_div)
+
+#Get percent variation explained
+if (curr.pcoa$correction[1] == "none") {
+  plot.var_explained <- round(100*curr.pcoa$values[1:2, "Relative_eig"]/sum(curr.pcoa$values[, "Relative_eig"]), digits=1)
+} else {
+  plot.var_explained <- round(100*curr.pcoa$values[1:2, "Rel_corr_eig"]/sum(curr.pcoa$values[, "Rel_corr_eig"]), digits=1)
+}
+
+#Prepare data for plotting
+plot.data <- data.frame(data.sample[curr.samples, ], Axis.1=curr.pcoa$vectors[, "Axis.1"], Axis.2=curr.pcoa$vectors[, "Axis.2"], Group=data.sample[curr.samples, "material"])
+#Get convex hulls around points
+plot.hulls <- plyr::ddply(plot.data, "Group", function(df) df[chull(df$Axis.1, df$Axis.2), ])
+#Get centroids
+plot.centroids <- plyr::ddply(plot.data, "Group", function(df) c(mean(df$Axis.1), mean(df$Axis.2)))
+curr.plot.df <- merge(plot.data, plot.centroids, by="Group")
+
+#Generate plot
+plot.data %>%
+  ggplot(aes(x=Axis.1, y=Axis.2, colour=material, group=material)) +
+    #Add group centroids
+    geom_point(data=curr.plot.df, aes(x=V1, y=V2, color=material), shape=15, size=5, alpha=0.6) +
+    #Add segments of points to centroids
+    geom_segment(data=curr.plot.df, aes(x=Axis.1, y=Axis.2, xend=V1, yend=V2), alpha=0.6) +
+    #Add points (per sample)
+    geom_point(size=3, alpha=0.6) +
+    #Add convex hull around all points per group
+    geom_polygon(data = plot.hulls, aes(fill=material), color=NA, alpha = 0.1) +
+    scale_color_brewer(palette = "Paired") +
+    scale_fill_brewer(palette = "Paired") +
+    #Add x & y axis labels
+    xlab(paste("Axis 1 [", plot.var_explained[1], "%]", sep="")) +
+    ylab(paste("Axis 2 [", plot.var_explained[2], "%]", sep="")) +
+    theme_minimal() -> curr.plot
+curr.plot
+```
+
+Remove all OTUs observed in matched negative controls. First, correct blood plasma samples.
+
+```{r}
+data.otu.cleaned <- data.otu.rel
+
+#Correct blood plasma samples
+ctr.samples.blood <- rownames(data.sample)[data.sample$material == "blood_plasma.negative_control"]
+ctr.otus.blood <- rownames(data.otu)[rowSums(data.otu[, ctr.samples.blood]) > 0]
+samples.blood <- rownames(data.sample)[data.sample$material == "blood_plasma"]
+data.otu.cleaned[ctr.otus.blood, samples.blood] <- 0
+
+#Get remaining OTUs
+clean.otus.blood <- rownames(data.otu.cleaned)[rowSums(data.otu.cleaned[, samples.blood]) > 0]
+clean.otus.sizes <- rowSums(data.otu.cleaned[clean.otus.blood, samples.blood])
+clean.otus.tax <- data.taxonomy[clean.otus.blood, ]
+clean.otus.tax$prevalence <- rowSums(data.otu.cleaned[clean.otus.blood, samples.blood] > 0) / length(samples.blood)
+clean.otus.tax$mean_abd <- clean.otus.sizes / length(samples.blood)
+head(clean.otus.tax[order(clean.otus.sizes, decreasing = T), ], 20)
+
+#Plot histogram of retained fraction of reads
+hist(colSums(data.otu.cleaned[, samples.blood]), 20)
+```
+
+Repeat for tissue samples.
+
+```{r}
+#Correct blood plasma samples
+ctr.samples.pancreas <- rownames(data.sample)[data.sample$material == "pancreas.negative_control"]
+ctr.otus.pancreas <- rownames(data.otu)[rowSums(data.otu[, ctr.samples.pancreas]) > 0]
+samples.tissue <- rownames(data.sample)[data.sample$material %in% c("pancreas", "duodenum", "pancreas_tumor")]
+data.otu.cleaned[ctr.otus.pancreas, samples.tissue] <- 0
+
+#Get remaining OTUs
+clean.otus.tissue <- rownames(data.otu.cleaned)[rowSums(data.otu.cleaned[, samples.tissue]) > 0]
+clean.otus.sizes <- rowSums(data.otu.cleaned[clean.otus.tissue, samples.tissue])
+clean.otus.tax <- data.taxonomy[clean.otus.tissue, ]
+clean.otus.tax$prevalence <- rowSums(data.otu.cleaned[clean.otus.tissue, samples.tissue] > 0) / length(samples.tissue)
+clean.otus.tax$mean_abd <- clean.otus.sizes / length(samples.tissue)
+head(clean.otus.tax[order(clean.otus.sizes, decreasing = T), ], 20)
+
+#Plot histogram of retained fraction of reads
+hist(colSums(data.otu.cleaned[, samples.tissue]), 20)
+```
+
+Generate higher-level taxonomic profiles in which contaminants are clearly indicated.
+
+```{r}
+#Subset OTU set to taxa observed in tissue (pancreas / tumor) and/or negative controls
+samples.tissue <- rownames(data.sample)[data.sample$material %in% c("pancreas", "pancreas_tumor")]
+curr.otus <- unique(c(clean.otus.tissue, ctr.otus.pancreas, ctr.otus.blood))
+
+#Summarise data at phylum level
+tmp.tax <- data.taxonomy
+tmp.tax$OTU <- rownames(tmp.tax)
+cbind(data.sample[samples.tissue, ], as.data.frame(t(data.otu.rel[curr.otus, samples.tissue]))) %>%
+  gather(OTU, abundance, 28:(27 + length(curr.otus))) %>%
+  left_join(tmp.tax[curr.otus, ], by="OTU") -> curr.data
+
+curr.data$phylum[is.na(curr.data$phylum)] <- "other"
+curr.data$phylum[curr.data$phylum == "Fusobacteria"] <- "other"
+curr.data$phylum[curr.data$phylum == "Deferribacteres"] <- "other"
+curr.data$contaminant <- curr.data$OTU %in% c(ctr.otus.pancreas, ctr.otus.blood)
+curr.data$contaminant <- curr.data$OTU %in% c(ctr.otus.pancreas)
+
+curr.data %>%
+  group_by(experiment_name, material, phylum) %>%
+  dplyr::summarise(abundance=sum(abundance)) -> curr.data.summ
+curr.data %>%
+  group_by(experiment_name, material, contaminant) %>%
+  dplyr::summarise(abundance=sum(abundance)) -> curr.data.contam
+curr.data %>%
+  filter(!contaminant) %>%
+  group_by(experiment_name, material, phylum) %>%
+  dplyr::summarise(abundance=sum(abundance)) -> curr.data.summ.clean
+
+order.x <- data.sample[samples.tissue, "experiment_name"][order(data.sample[samples.tissue, "material"], data.sample[samples.tissue, "subject_id"])]
+
+ggplot(curr.data.summ, aes(x=experiment_name, y=abundance, fill=phylum)) +
+  geom_bar(stat="identity") +
+  scale_fill_brewer(palette = "Paired") +
+  scale_x_discrete(limits=order.x, labels=data.sample[order.x, "material"]) +
+  coord_flip() +
+  theme_minimal() +
+  theme(
+    axis.title.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  ) -> p.taxa.bar
+print(p.taxa.bar)
+ggsave(p.taxa.bar, file=paste0(PARAM$folder.results, "16S/tissue_16S.bar_chart.tax_composition.ece.pdf"), height = 8, width = 10, useDingbats=F)
+
+ggplot(curr.data.contam, aes(x=experiment_name, y=abundance, fill=contaminant)) +
+  geom_bar(stat="identity") +
+  scale_fill_manual(values = c("#1f78b4", "#fb9a99")) +
+  scale_x_discrete(limits=order.x, labels=data.sample[order.x, "material"]) +
+  coord_flip() +
+  theme_minimal() +
+  theme(
+    axis.title.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  ) -> p.contam.bar
+print(p.contam.bar)
+ggsave(p.contam.bar, file=paste0(PARAM$folder.results, "16S/tissue_16S.bar_chart.contam_composition.ece.pdf"), height = 8, width = 10, useDingbats=F)
+
+ggplot(curr.data.summ.clean, aes(x=experiment_name, y=abundance, fill=phylum)) +
+  geom_bar(stat="identity") +
+  scale_fill_brewer(palette = "Paired") +
+  scale_x_discrete(limits=order.x, labels=data.sample[order.x, "material"]) +
+  coord_flip() +
+  theme_minimal() +
+  theme(
+    axis.title.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  ) -> p.taxa_clean.bar
+print(p.taxa_clean.bar)
+ggsave(p.taxa.bar, file=paste0(PARAM$folder.results, "16S/tissue_16S.bar_chart.tax_composition.ece.pdf"), height = 8, width = 10, useDingbats=F)
+
+curr.data %>%
+  filter(contaminant == FALSE) %>%
+  group_by(experiment_name) %>%
+  dplyr::summarise(material=first(material), abd=sum(abundance)) %>%
+  dplyr::summarise(abd=mean(abd)) -> all.contam
+
+```
+
+Repeat, but with stiched boxplots.
+
+```{r, fig.width=4, fig.height=4}
+curr.data.summ %>%
+  mutate(type="raw") %>%
+  unite(material, material, type, sep = " ") -> curr.data.summ
+curr.data.summ.clean %>%
+  mutate(type="non_contaminant") %>%
+  unite(material, material, type, sep = " ") -> curr.data.summ.clean
+curr.data.summ.combined <- rbind(curr.data.summ, curr.data.summ.clean)
+curr.data.summ.combined$material <- factor(as.character(curr.data.summ.combined$material), levels = c("pancreas raw", "pancreas_tumor raw", "pancreas non_contaminant", "pancreas_tumor non_contaminant"))
+
+ggplot(curr.data.summ.combined, aes(x=phylum, y=abundance, fill=material, colour=material)) +
+  #geom_hline(yintercept = all.contam$abd, colour="#fb9a99", size=1, alpha=0.7) +
+  geom_boxplot(alpha=0.4, outlier.colour = NA) +
+  geom_point(position = position_jitterdodge(), size=2) +
+  scale_color_manual(values=c("#a6cee3", "#fdbf6f", "#1f78b4", "#ff7f00")) +
+  scale_fill_manual(values=c("#a6cee3", "#fdbf6f", "#1f78b4", "#ff7f00")) +
+  scale_y_sqrt() +
+  scale_x_discrete(limits = rev(c("Actinobacteria", "Bacteroidetes", "Cyanobacteria", "Deinococcus-Thermus", "Firmicutes", "Proteobacteria", "Verrucomicrobia", "other"))) +
+  coord_flip() +
+  theme_minimal() +
+  theme(
+    axis.title.y = element_blank()
+  ) -> p.taxa.point
+print(p.taxa.point)
+ggsave(p.taxa.point, file=paste0(PARAM$folder.results, "16S/tissue_16S.boxplot.tax_composition..ece.pdf"), height = 10, width = 10, useDingbats=F)
+```
+
+Check differential abundance signals for several subgroups of interest.
+
+```{r, fig.width=8, fig.height=8}
+whitelist.genera <- c("Bifidobacterium", "Veillonella", "Akkermansia", "Bacteroides", "Streptococcus", "Lactobacillus")
+
+curr.data %>%
+  filter(genus %in% whitelist.genera & !is.na(genus) & material %in% c("pancreas", "pancreas_tumor")) %>%
+  group_by(experiment_name, material, genus) %>%
+  summarise(abundance = sum(abundance)) -> curr.data.genus
+
+ggplot(curr.data.genus, aes(x=genus, y=abundance, colour=material, fill=material)) +
+  geom_boxplot(alpha=0.4, outlier.colour = NA) +
+  geom_point(position = position_jitterdodge(), size=2) +
+  scale_color_manual(values=c("#1f78b4", "#fdbf6f")) +
+  scale_fill_manual(values=c("#1f78b4", "#fdbf6f")) +
+  scale_y_log10() +
+  coord_flip() +
+  theme_minimal() +
+  theme(
+    axis.title.y = element_blank()
+  ) -> p.diff_abd.tissue.genus
+print(p.diff_abd.tissue.genus)
+ggsave(p.diff_abd.tissue.genus, file=paste0(PARAM$folder.results, "16S/tissue_16S.diff_abd.tumor_healthy.genus.ece.pdf"), height = 6, width = 6, useDingbats=F)
+
+#Test for significance
+curr.data.genus %>%
+  left_join(data.sample, by="experiment_name") %>%
+  select(subject_id, material.x, genus, abundance) %>%
+  ungroup() %>% select(2:5) %>%
+  spread(material.x, abundance) %>%
+  group_by(genus) %>%
+  summarise(p=wilcox.test(pancreas, pancreas_tumor, paired=T)$p.value)
+```
+
+Repeat, running on all genera.
+
+```{r, fig.width=8, fig.height=8}
+curr.data %>%
+  filter(!is.na(genus) & material %in% c("pancreas", "pancreas_tumor")) %>%
+  group_by(experiment_name, material, genus) %>%
+  summarise(abundance = sum(abundance)) -> curr.data.genus
+
+curr.data.genus %>%
+  group_by(genus) %>%
+  summarise(tot_abundace = sum(abundance), n=sum(abundance > 0)) %>%
+  filter(tot_abundace > 0 & n >= 10) -> curr.data.genus.total
+
+curr.data.genus %>%
+  filter(genus %in% curr.data.genus.total$genus) %>%
+  ggplot(aes(x=genus, y=abundance, colour=material, fill=material)) +
+    geom_boxplot(alpha=0.4, outlier.colour = NA) +
+    geom_point(position = position_jitterdodge(), size=2) +
+    scale_color_manual(values=c("#1f78b4", "#fdbf6f")) +
+    scale_fill_manual(values=c("#1f78b4", "#fdbf6f")) +
+    scale_y_log10() +
+    coord_flip() +
+    theme_minimal() +
+    theme(
+      axis.title.y = element_blank()
+    ) -> p.diff_abd.tissue.genus
+print(p.diff_abd.tissue.genus)
+ggsave(p.diff_abd.tissue.genus, file=paste0(PARAM$folder.results, "16S/tissue_16S.diff_abd.tumor_healthy.genus_all.ece.pdf"), height = 12, width = 8, useDingbats=F)
+
+#Test for significance
+curr.data.genus %>%
+  filter(genus %in% curr.data.genus.total$genus) %>%
+  left_join(data.sample, by="experiment_name") %>%
+  select(subject_id, material.x, genus, abundance) %>%
+  ungroup() %>% select(2:5) %>%
+  spread(material.x, abundance) %>%
+  group_by(genus) %>%
+  summarise(p=wilcox.test(pancreas, pancreas_tumor)$p.value) %>%
+  mutate(p.adjust = p.adjust(p, method = "BH")) %>%
+  arrange(p.adjust) -> data.genus_all.p
+write.table(data.genus_all.p, file=paste0(PARAM$folder.results, "16S/tissue_16S.diff_abd.tumor_healthy.genus_all.ece.tsv"), sep="\t", row.names = F, quote=F)
+```
+
+Generate a bubble plot of selected genera abundance across samples.
+
+```{r, fig.width=8, fig.height=8}
+whitelist.genera <- c("Bacteroides","Akkermansia", "Lactobacillus", "Veillonella",  "Bifidobacterium", "Parabacteroides", "Streptococcus")
+curr.data %>%
+  filter(!is.na(genus) & genus %in% whitelist.genera & material %in% c("pancreas", "pancreas_tumor")) %>%
+  group_by(experiment_name, material, genus) %>%
+  summarise(abundance = sum(abundance)) %>%
+  filter(abundance > 0) %>%
+  arrange(material) %>%
+  ggplot(aes(x=genus, y=experiment_name, size=abundance, colour=abundance)) +
+    geom_point(alpha=0.7) +
+    scale_colour_gradient(low="#74c476", high="#00441b") +
+    scale_size_area(max_size = 20) +
+    #scale_y_discrete(limits = ) +
+    theme_minimal() -> p.genus.bubble
+print(p.genus.bubble)
+ggsave(p.genus.bubble, file=paste0(PARAM$folder.results, "16S/tissue_16S.diff_abd.tumor_healthy.genus_bubble.ece.pdf"), height = 12, width = 8, useDingbats=F)
+
+```
+
+Repeat, running on all families.
+
+```{r, fig.width=8, fig.height=8}
+curr.data %>%
+  filter(!is.na(family) & material %in% c("pancreas", "pancreas_tumor")) %>%
+  group_by(experiment_name, material, family) %>%
+  summarise(abundance = sum(abundance)) -> curr.data.family
+
+curr.data.family %>%
+  group_by(family) %>%
+  summarise(tot_abundace = sum(abundance), n=sum(abundance > 0)) %>%
+  filter(tot_abundace > 0 & n >= 10) -> curr.data.family.total
+
+curr.data.family %>%
+  filter(family %in% curr.data.family.total$family) %>%
+  ggplot(aes(x=family, y=abundance, colour=material, fill=material)) +
+    geom_boxplot(alpha=0.4, outlier.colour = NA) +
+    geom_point(position = position_jitterdodge(), size=2) +
+    scale_color_manual(values=c("#1f78b4", "#fdbf6f")) +
+    scale_fill_manual(values=c("#1f78b4", "#fdbf6f")) +
+    scale_y_log10() +
+    coord_flip() +
+    theme_minimal() +
+    theme(
+      axis.title.y = element_blank()
+    ) -> p.diff_abd.tissue.family
+print(p.diff_abd.tissue.family)
+ggsave(p.diff_abd.tissue.family, file=paste0(PARAM$folder.results, "16S/tissue_16S.diff_abd.tumor_healthy.family_all.ece.pdf"), height = 12, width = 8, useDingbats=F)
+
+#Test for significance
+curr.data.family %>%
+  filter(family %in% curr.data.family.total$family) %>%
+  left_join(data.sample, by="experiment_name") %>%
+  select(subject_id, material.x, family, abundance) %>%
+  ungroup() %>% select(2:5) %>%
+  spread(material.x, abundance) %>%
+  group_by(family) %>%
+  summarise(p=wilcox.test(pancreas, pancreas_tumor)$p.value) %>%
+  mutate(p.adjust = p.adjust(p, method = "BH")) %>%
+  arrange(p.adjust) -> data.family_all.p
+write.table(data.family_all.p, file=paste0(PARAM$folder.results, "16S/tissue_16S.diff_abd.tumor_healthy.family_all.ece.tsv"), sep="\t", row.names = F, quote=F)
+```
+
+Repeat, running on all classified species.
+
+```{r, fig.width=8, fig.height=8}
+curr.data %>%
+  filter(!is.na(species) & material %in% c("pancreas", "pancreas_tumor")) %>%
+  group_by(experiment_name, material, species) %>%
+  summarise(abundance = sum(abundance)) -> curr.data.species
+
+curr.data.species %>%
+  group_by(species) %>%
+  summarise(tot_abundace = sum(abundance), n=sum(abundance > 0)) %>%
+  filter(tot_abundace > 0 & n >= 3) -> curr.data.species.total
+
+curr.data.species %>%
+  filter(species %in% curr.data.species.total$species) %>%
+  ggplot(aes(x=species, y=abundance, colour=material, fill=material)) +
+    geom_boxplot(alpha=0.4, outlier.colour = NA) +
+    geom_point(position = position_jitterdodge(), size=2) +
+    scale_color_manual(values=c("#1f78b4", "#fdbf6f")) +
+    scale_fill_manual(values=c("#1f78b4", "#fdbf6f")) +
+    scale_y_log10() +
+    coord_flip() +
+    theme_minimal() +
+    theme(
+      axis.title.y = element_blank()
+    ) -> p.diff_abd.tissue.species
+print(p.diff_abd.tissue.species)
+ggsave(p.diff_abd.tissue.species, file=paste0(PARAM$folder.results, "16S/tissue_16S.diff_abd.tumor_healthy.species_all.ece.pdf"), height = 12, width = 8, useDingbats=F)
+```
+
+Match genus-level abundances in tissue to FISH observations.
+
+```{r, fig.width=4, fig.height=4}
+colnames(data.fish) <- c("experiment_name", "genus", "FISH")
+curr.data %>%
+  filter(!is.na(genus) & genus %in% whitelist.genera & material %in% c("pancreas", "pancreas_tumor") & experiment_name %in% data.fish$experiment_name) %>%
+  group_by(experiment_name, material, genus) %>%
+  summarise(abundance = sum(abundance)) %>%
+  left_join(data.fish) %>%
+  #filter(abundance > 0) %>%
+  arrange(material) %>%
+  ggplot(aes(x=genus, y=experiment_name, size=abundance)) +
+    geom_point(alpha=0.7, colour="orange") +
+    geom_point(aes(shape=FISH), size=5, colour="blue") +
+    #scale_colour_gradient(low="#74c476", high="#00441b") +
+    scale_size_area(max_size = 20) +
+    scale_shape_manual(values = c(4, 3,0)) +
+    #scale_y_discrete(limits = ) +
+    theme_minimal() +
+    theme(axis.title = element_blank())-> p.genus.bubble.fish
+print(p.genus.bubble.fish)
+ggsave(p.genus.bubble.fish, file=paste0(PARAM$folder.results, "16S/tissue_16S.diff_abd.tumor_healthy.genus_bubble.FISH.ece.pdf"), height = 6, width = 8, useDingbats=F)
+```
+
+
+
+
+
+Detect putative contaminants (or non-contaminants) using the `decontam` package. The function `isNotContaminant` is used for this purpose, as recommended by the authors for low-biomass samples. This function compares prevalence of an OTU among control and non-control samples and assigns it as *non-contaminant* if it is more prevalent among non-controls.
+
+First, process `blood serum` samples.
+
+```{r}
+#Subset to blood samples
+c.samples <- rownames(data.sample)[data.sample$material %in% c("blood_plasma", "blood_plasma.negative_control")]
+c.otu <- t(data.otu.rel[, c.samples])
+c.dat.sample <- data.sample[c.samples, ]
+c.neg <- c.dat.sample$artificial == "negative_control"
+c.neg[is.na(c.neg)] <- FALSE
+
+#Identify non-contaminant sequences
+c.contam.blood <- isNotContaminant(c.otu, neg=c.neg, normalize = F, detailed = T)
+c.contam.blood <- c.contam.blood[order(c.contam.blood$freq, decreasing = T), ]
+```
+
+This approach identifies `r sum(c.contam.blood$not.contaminant)` OTUs as *non-contaminant*. These are the top hits by overall frequency:
+
+```{r}
+head(cbind(c.contam.blood[c.contam.blood$not.contaminant, ], data.taxonomy[rownames(c.contam.blood)[c.contam.blood$not.contaminant], ]), 20)
+```
+
+Top *contaminant* OTUs by frequency:
+
+```{r}
+head(cbind(c.contam.blood[!c.contam.blood$not.contaminant, ], data.taxonomy[rownames(c.contam.blood)[!c.contam.blood$not.contaminant], ]), 20)
+```
+
+Repeat with `tissue` samples.
+
+```{r}
+#Subset to blood samples
+c.samples <- rownames(data.sample)[data.sample$material %in% c("pancreas", "pancreas.negative_control", "pancreas_tumor", "duodenum")]
+c.otu <- t(data.otu.rel[, c.samples])
+c.dat.sample <- data.sample[c.samples, ]
+c.neg <- c.dat.sample$artificial == "negative_control"
+c.neg[is.na(c.neg)] <- FALSE
+
+#Identify non-contaminant sequences
+c.contam.tissue <- isNotContaminant(c.otu, neg=c.neg, normalize = F, detailed = T)
+c.contam.tissue <- c.contam.tissue[order(c.contam.tissue$freq, decreasing = T), ]
+```
+
+This approach identifies `r sum(c.contam.tissue$not.contaminant)` OTUs as *non-contaminant*. These are the top hits by overall frequency:
+
+```{r}
+head(cbind(c.contam.tissue[c.contam.tissue$not.contaminant, ], data.taxonomy[rownames(c.contam.tissue)[c.contam.tissue$not.contaminant], ]), 20)
+```
+
+Top *contaminant* OTUs by frequency:
+
+```{r}
+head(cbind(c.contam.tissue[!c.contam.tissue$not.contaminant, ], data.taxonomy[rownames(c.contam.tissue)[!c.contam.tissue$not.contaminant], ]), 20)
+```
+
+What is the overlap between putative contaminants and non-contaminants identified by both methods?
+
+```{r}
+true.contam.blood <- rownames(c.contam.blood)[c.contam.blood$freq > 0 & !c.contam.blood$not.contaminant]
+true.contam.tissue <- rownames(c.contam.tissue)[c.contam.tissue$freq > 0 & !c.contam.tissue$not.contaminant]
+
+true.contam.shared <- intersect(true.contam.blood, true.contam.tissue)
+true.contam.union <- union(true.contam.blood, true.contam.tissue)
+```
+
+Both sets identify a shared `r length(true.contam.shared)` OTUs as *contaminant*; the union of both sets is `r length(true.contam.union)` OTUs.
+
+For each body site or `material`, what fraction of abundance do these OTUs represent?
+
+```{r}
+for (m in levels(data.sample$material)) {
+  writeLines(m)
+  print(summary(colSums(data.otu.rel[true.contam.union, data.sample$material == m])))
+  hist(colSums(data.otu.rel[true.contam.union, data.sample$material == m]), 20)
+}
+```
+
+## Trace OTUs within Individuals across Sample Types
+
+For several individuals, samples are available from multiple body sites. Which taxa can be traced between saliva, (tumor) pancreatic tissue and stool, and possibly beyond (blood & duodenum), accounting for extraction controls?
+
+```{r, fig.width=12, fig.height=12}
+#Concatenate sample data and OTU data
+data.full <- cbind(data.sample, as.data.frame(t(data.otu.rel)))
+
+#Extract subjects of interest
+data.sample %>%
+  group_by(subject_id) %>%
+  filter(material %in% c("saliva", "pancreas", "pancreas_tumor", "feces")) %>%
+  filter(sum(n()) > 2) %>%
+  summarise(n = n()) %>%
+  pull(subject_id) -> c.subjects
+
+#Extract OTUs observed in (at least 2 of) the corresponding samples, at least one of which is tissue or tumor
+data.otu.inc <- (data.otu > 0) * 1
+c.otus <- character()
+for (subj in c.subjects) {
+  c.otus <- unique(c(c.otus, rownames(data.otu.inc)[
+    (rowSums(data.otu.inc[, data.sample$subject_id == subj]) > 1) &
+    (rowSums(data.otu.inc[, data.sample$subject_id == subj & data.sample$material %in% c("pancreas", "pancreas_tumor"), drop=FALSE]) > 0)
+  ]))
+}
+
+#Define printable names for all OTUs
+data.taxonomy$OTU <- rownames(data.taxonomy)
+tmp.names <- apply(data.taxonomy[, 2:8], 1, paste, collapse =";")
+tmp.names <- gsub(";NA.*", "", tmp.names, perl = T)
+tmp.names <- gsub(".+;", "", tmp.names, perl = T)
+data.taxonomy$print.name <- paste(data.taxonomy$OTU, tmp.names, sep=":")
+data.taxonomy$print.name <- factor(data.taxonomy$print.name, levels=data.taxonomy$print.name[order(data.taxonomy$phylum, data.taxonomy$class, data.taxonomy$order, data.taxonomy$family, data.taxonomy$genus, data.taxonomy$OTU, decreasing = T)])
+data.taxonomy.sub <- data.taxonomy[c.otus, ]
+
+#Get set of OTUs also observed in extraction controls (for tissue only, or for tissue and blood)
+c.otus.ctr.tissue <- c.otus[rowSums(data.otu.inc[c.otus, data.sample$material %in% c("pancreas.negative_control")]) > 0]
+c.otus.ctr.blood <- c.otus[rowSums(data.otu.inc[c.otus, data.sample$material %in% c("blood_plasma.negative_control")]) > 0]
+c.otus.ctr.tissue_blood <- c.otus[rowSums(data.otu.inc[c.otus, data.sample$material %in% c("pancreas.negative_control", "blood_plasma.negative_control")]) > 0]
+
+#Plot 
+data.full.inc <- cbind(data.sample, as.data.frame(t(data.otu.inc[c.otus[!c.otus %in% c.otus.ctr.tissue_blood], ])))
+data.full.inc %>%
+  filter(subject_id %in% c.subjects& material %in% c("saliva", "blood_serum", "pancreas", "pancreas_tumor", "feces")) %>%
+  gather("OTU", "incidence", 28:ncol(data.full.inc)) %>%
+  left_join(data.taxonomy[c.otus[!c.otus %in% c.otus.ctr.tissue_blood], ], by="OTU") %>%
+  ggplot(aes(x=material, y=print.name, fill=incidence)) +
+    geom_tile() +
+    scale_x_discrete(limits = c("saliva", "feces", "blood_serum", "pancreas", "pancreas_tumor")) +
+    #scale_y_discrete(limits = data.taxonomy.sub$print.name[order(data.taxonomy.sub$phylum, data.taxonomy.sub$class, data.taxonomy.sub$order, data.taxonomy.sub$family, data.taxonomy.sub$genus, data.taxonomy.sub$species)]) +
+    scale_fill_gradient(low="#deebf7", high="#08519c", na.value = "white") +
+    facet_grid(. ~ subject_id) +
+    theme_minimal()
+```
+
+Summarise prevalence across subjects for each taxon per body site or combination of body sites.
+
+```{r}
+#Subset incidence data to OTUs of interest
+c.inc <- data.otu.inc[c.otus, ]
+
+#Prepoluate prevalence data with "trivial" prevalence values
+tmp.prevalence <- data.frame(
+  OTU = c.otus,
+  negctr.tissue = rowSums(c.inc[, data.sample$material == "pancreas.negative_control"]) / sum(data.sample$material == "pancreas.negative_control"),
+  negctr.serum = rowSums(c.inc[, data.sample$material == "blood_plasma.negative_control"]) / sum(data.sample$material == "blood_plasma.negative_control"),
+  negctr.all = rowSums(c.inc[, data.sample$material %in% c("pancreas.negative_control", "blood_plasma.negative_control")]) / sum(data.sample$material %in% c("pancreas.negative_control", "blood_plasma.negative_control")),
+  saliva.CTR = rowSums(c.inc[, data.sample$material == "saliva" & data.sample$subject_disease_status == "CTR"]) / sum(data.sample$material == "saliva" & data.sample$subject_disease_status == "CTR"),
+  saliva.PC = rowSums(c.inc[, data.sample$material == "saliva" & data.sample$subject_disease_status == "PC"]) / sum(data.sample$material == "saliva" & data.sample$subject_disease_status == "PC"),
+  feces.CTR = rowSums(c.inc[, data.sample$material == "feces" & data.sample$subject_disease_status == "CTR"]) / sum(data.sample$material == "feces" & data.sample$subject_disease_status == "CTR"),
+  feces.PC = rowSums(c.inc[, data.sample$material == "feces" & data.sample$subject_disease_status == "PC"]) / sum(data.sample$material == "feces" & data.sample$subject_disease_status == "PC"),
+  serum.CTR = rowSums(c.inc[, data.sample$material == "blood_plasma" & data.sample$subject_disease_status == "CTR" & !is.na(data.sample$subject_disease_status)]) / sum(data.sample$material == "blood_plasma" & data.sample$subject_disease_status == "CTR" & !is.na(data.sample$subject_disease_status)),
+  serum.PC = rowSums(c.inc[, data.sample$material == "blood_plasma" & data.sample$subject_disease_status == "PC" & !is.na(data.sample$subject_disease_status)]) / sum(data.sample$material == "blood_plasma" & data.sample$subject_disease_status == "PC" & !is.na(data.sample$subject_disease_status)),
+  pancreas.all = rowSums(c.inc[, data.sample$material == "pancreas"]) / sum(data.sample$material == "pancreas"),
+  pancreastumor.all = rowSums(c.inc[, data.sample$material == "pancreas_tumor"]) / sum(data.sample$material == "pancreas_tumor"),
+  duodenum.all = rowSums(c.inc[, data.sample$material == "duodenum"]) / sum(data.sample$material == "duodenum")
+)
+rownames(tmp.prevalence) <- tmp.prevalence$OTU
+
+#Add per-subject prevalences for more complex types
+cbind(data.sample, as.data.frame(t(c.inc))) %>%
+  filter(subject_id %in% c.subjects & material %in% c("saliva", "feces", "pancreas", "pancreas_tumor", "blood_plasma")) %>%
+  gather(OTU, incidence, 28:(27 + nrow(c.inc))) %>%
+  select(experiment_name, subject_id, material, OTU, incidence) %>%
+  dcast(subject_id + OTU ~ material, value.var = "incidence", fun.aggregate = sum) %>%
+  group_by(OTU) %>%
+  summarise(
+    saliva_serum.all = sum(saliva > 0 & blood_plasma > 0) / sum(blood_plasma > 0),
+    saliva_pancreas.all = sum(saliva > 0 & pancreas > 0) / sum(pancreas > 0),
+    saliva_tumor.all = sum(saliva > 0 & pancreas_tumor > 0) / sum(pancreas_tumor > 0),
+    feces_pancreas.all = sum(feces > 0 & pancreas > 0) / sum(pancreas > 0),
+    feces_tumor.all = sum(feces > 0 & pancreas_tumor > 0) / sum(pancreas_tumor > 0),
+    pancreas_tumor.all = sum(pancreas > 0 & pancreas_tumor > 0) / sum(pancreas_tumor > 0),
+    serum_tumor.all = sum(blood_plasma > 0 & pancreas_tumor > 0) / sum(pancreas_tumor > 0)
+  ) %>%
+  full_join(tmp.prevalence, by="OTU") %>%
+  left_join(data.taxonomy.sub, by="OTU") %>%
+  as.data.frame() -> data.prevalence
+data.prevalence$print.name <- factor(as.character(data.prevalence$print.name), levels=as.character(data.prevalence$print.name)[order(data.prevalence$negctr.all, data.prevalence$print.name, data.prevalence$pancreastumor.all)])
+
+#Gather to long format
+data.prevalence %>%
+  filter(negctr.all == 0) %>%
+  select(-consensus_taxonomy, -domain, -size) %>%
+  gather("site", "prevalence", -OTU, -print.name, -phylum, -class, -order, -family, -genus, -species) %>%
+  separate(site, c("material", "type"), sep="\\.", fill="right", remove = F) %>%
+  separate(material, c("source", "sink"), sep="_", fill="right", remove = F) -> data.prevalence.long
+data.prevalence.long$source <- factor(data.prevalence.long$source, levels=c("negctr", "pancreas", "pancreastumor", "duodenum", "serum", "saliva", "feces"))
+```
+
+Plot general prevalence across sites.
+
+```{r, fig.width=12, fig.height=12}
+data.prevalence.long %>%
+  filter(site %in% c("negctr.all", "saliva.CTR", "saliva.PC", "feces.CTR", "feces.PC", "serum.CTR", "serum.PC", "pancreas.all", "pancreastumor.all", "duodenum.all")) %>%
+  ggplot(aes(x=prevalence, y=print.name, colour=source, group=print.name, shape=type)) +
+    geom_vline(xintercept = 0, colour="grey") +
+    geom_point(alpha=0.8, size=2) +
+    geom_line() +
+    scale_color_brewer(palette = "Paired") +
+    facet_grid(. ~ source) +
+    theme_minimal() +
+    theme(axis.title.y = element_blank()) -> curr.plot
+print(curr.plot)
+ggsave(curr.plot, file=paste0(PARAM$folder.results, "16S/tissue_16S.all_materials.pdf"), height = 12, width = 12, useDingbats=F)
+```
+
+Plot source-sink prevalences
+
+```{r, fig.width=12, fig.height=12}
+data.prevalence.long %>%
+  filter(site %in% c("saliva_serum.all", "saliva_pancreas.all", "saliva_tumor.all", "feces_pancreas.all", "feces_tumor.all", "pancreas_tumor.all", "serum_tumor.all")) %>%
+  ggplot(aes(x=prevalence, y=print.name, colour=sink, group=print.name)) +
+    geom_vline(xintercept = 0, colour="grey") +
+    geom_jitter(alpha=0.8, size=2, height=0.2, width=0) +
+    #geom_line() +
+    scale_color_brewer(palette = "Paired") +
+    facet_grid(. ~ source) +
+    theme_minimal() +
+    theme(axis.title.y = element_blank()) -> curr.plot
+print(curr.plot)
+ggsave(curr.plot, file=paste0(PARAM$folder.results, "16S/tissue_16S.source_sink.pdf"), height = 12, width = 12, useDingbats=F)
+```
+
+
+## Trace ASVs within Individuals across Sample Types
+
+Parse specI taxonomy file.
+
+```{r}
+file.specI_taxonomy <- paste0(PARAM$folder.data, "prok-refdb-v11.0.0_specI-v2_taxonomy_v2UL.map")
+data.taxonomy.full <- as.data.frame(read_delim(file.specI_taxonomy, "\t", escape_double = FALSE, trim_ws = TRUE))
+data.taxonomy.full$repID <- sapply(strsplit(data.taxonomy.full$repGenome, " "), function(x) {x[[1]]})
+rownames(data.taxonomy.full) <- data.taxonomy.full$specI_cluster
+head(data.taxonomy.full)
+```
+
+Trace ASVs within individuals between saliva, (tumor) pancreatic tissue and stool, and possibly beyond (blood & duodenum), accounting for extraction controls.
+
+```{r, fig.width=12, fig.height=12}
+#Concatenate sample data and OTU data
+data.full <- cbind(data.sample, as.data.frame(t(data.asv.rel)))
+
+#Extract subjects of interest
+data.sample %>%
+  group_by(subject_id) %>%
+  filter(material %in% c("saliva", "pancreas", "pancreas_tumor", "feces")) %>%
+  filter(sum(n()) > 2) %>%
+  summarise(n = n()) %>%
+  pull(subject_id) -> c.subjects
+
+#Extract OTUs observed in (at least 2 of) the corresponding samples, at least one of which is tissue or tumor
+data.asv.inc <- (data.asv > 0) * 1
+c.asvs <- character()
+for (subj in c.subjects) {
+  c.asvs <- unique(c(c.asvs, rownames(data.asv.inc)[
+    (rowSums(data.asv.inc[, data.sample$subject_id == subj]) > 1) &
+    (rowSums(data.asv.inc[, data.sample$subject_id == subj & data.sample$material %in% c("pancreas", "pancreas_tumor"), drop=FALSE]) > 0)
+  ]))
+}
+
+#Define printable names for all OTUs
+data.taxonomy.asv$ASV <- rownames(data.taxonomy.asv)
+tmp.names <- apply(data.taxonomy.asv[, 2:8], 1, paste, collapse =";")
+tmp.names <- gsub(";NA.*", "", tmp.names, perl = T)
+tmp.names <- gsub(".+;", "", tmp.names, perl = T)
+data.taxonomy.asv$print.name <- paste(data.taxonomy.asv$ASV, tmp.names, sep=":")
+data.taxonomy.asv$print.name <- factor(data.taxonomy.asv$print.name, levels=data.taxonomy.asv$print.name[order(data.taxonomy.asv$phylum, data.taxonomy.asv$class, data.taxonomy.asv$order, data.taxonomy.asv$family, data.taxonomy.asv$genus, data.taxonomy.asv$ASV, decreasing = T)])
+data.taxonomy.sub <- data.taxonomy.asv[c.asvs, ]
+
+#Get set of OTUs also observed in extraction controls (for tissue only, or for tissue and blood)
+c.asvs.ctr.tissue <- c.asvs[rowSums(data.asv.inc[c.asvs, data.sample$material %in% c("pancreas.negative_control")]) > 0]
+c.asvs.ctr.tissue_blood <- c.asvs[rowSums(data.asv.inc[c.asvs, data.sample$material %in% c("pancreas.negative_control", "blood_plasma.negative_control")]) > 0]
+
+#Plot
+#data.full.inc <- cbind(data.sample, as.data.frame(t(data.asv.inc[c.asvs[!c.asvs %in% c.asvs.ctr.tissue_blood], ])))
+data.full.inc <- cbind(data.sample, as.data.frame(t(data.asv.inc[c.asvs[!c.asvs %in% c.asvs.ctr.tissue], ])))
+data.full.inc %>%
+  filter(subject_id %in% c.subjects& material %in% c("saliva", "blood_serum", "pancreas", "pancreas_tumor", "feces")) %>%
+  gather("ASV", "incidence", 28:ncol(data.full.inc)) %>%
+  left_join(data.taxonomy.asv[c.asvs[!c.asvs %in% c.asvs.ctr.tissue_blood], ], by="ASV") %>%
+  ggplot(aes(x=material, y=print.name, fill=incidence)) +
+    geom_tile() +
+    scale_x_discrete(limits = c("saliva", "feces", "blood_serum", "pancreas", "pancreas_tumor")) +
+    #scale_y_discrete(limits = data.taxonomy.sub$print.name[order(data.taxonomy.sub$phylum, data.taxonomy.sub$class, data.taxonomy.sub$order, data.taxonomy.sub$family, data.taxonomy.sub$genus, data.taxonomy.sub$species)]) +
+    scale_fill_gradient(low="#deebf7", high="#08519c", na.value = "white") +
+    facet_grid(. ~ subject_id) +
+    theme_minimal()
+```
+
+Summarise prevalence across subjects for each taxon per body site or combination of body sites.
+
+```{r}
+#Subset incidence data to ASVs of interest
+c.inc <- data.asv.inc[c.asvs, ]
+
+#Prepoluate prevalence data with "trivial" prevalence values
+tmp.prevalence <- data.frame(
+  ASV = c.asvs,
+  negctr.tissue = rowSums(c.inc[, data.sample$material == "pancreas.negative_control"]) / sum(data.sample$material == "pancreas.negative_control"),
+  negctr.serum = rowSums(c.inc[, data.sample$material == "blood_plasma.negative_control"]) / sum(data.sample$material == "blood_plasma.negative_control"),
+  negctr.all = rowSums(c.inc[, data.sample$material %in% c("pancreas.negative_control", "blood_plasma.negative_control")]) / sum(data.sample$material %in% c("pancreas.negative_control", "blood_plasma.negative_control")),
+  saliva.CTR = rowSums(c.inc[, data.sample$material == "saliva" & data.sample$subject_disease_status == "CTR"]) / sum(data.sample$material == "saliva" & data.sample$subject_disease_status == "CTR"),
+  saliva.PC = rowSums(c.inc[, data.sample$material == "saliva" & data.sample$subject_disease_status == "PC"]) / sum(data.sample$material == "saliva" & data.sample$subject_disease_status == "PC"),
+  feces.CTR = rowSums(c.inc[, data.sample$material == "feces" & data.sample$subject_disease_status == "CTR"]) / sum(data.sample$material == "feces" & data.sample$subject_disease_status == "CTR"),
+  feces.PC = rowSums(c.inc[, data.sample$material == "feces" & data.sample$subject_disease_status == "PC"]) / sum(data.sample$material == "feces" & data.sample$subject_disease_status == "PC"),
+  serum.CTR = rowSums(c.inc[, data.sample$material == "blood_plasma" & data.sample$subject_disease_status == "CTR" & !is.na(data.sample$subject_disease_status)]) / sum(data.sample$material == "blood_plasma" & data.sample$subject_disease_status == "CTR" & !is.na(data.sample$subject_disease_status)),
+  serum.PC = rowSums(c.inc[, data.sample$material == "blood_plasma" & data.sample$subject_disease_status == "PC" & !is.na(data.sample$subject_disease_status)]) / sum(data.sample$material == "blood_plasma" & data.sample$subject_disease_status == "PC" & !is.na(data.sample$subject_disease_status)),
+  pancreas.all = rowSums(c.inc[, data.sample$material == "pancreas"]) / sum(data.sample$material == "pancreas"),
+  pancreastumor.all = rowSums(c.inc[, data.sample$material == "pancreas_tumor"]) / sum(data.sample$material == "pancreas_tumor"),
+  duodenum.all = rowSums(c.inc[, data.sample$material == "duodenum"]) / sum(data.sample$material == "duodenum")
+)
+rownames(tmp.prevalence) <- tmp.prevalence$ASV
+
+#Add per-subject prevalences for more complex types
+cbind(data.sample, as.data.frame(t(c.inc))) %>%
+  filter(subject_id %in% c.subjects & material %in% c("saliva", "feces", "pancreas", "pancreas_tumor", "blood_plasma")) %>%
+  gather(ASV, incidence, 28:(27 + nrow(c.inc))) %>%
+  select(experiment_name, subject_id, material, ASV, incidence) %>%
+  dcast(subject_id + ASV ~ material, value.var = "incidence", fun.aggregate = sum) %>%
+  group_by(ASV) %>%
+  summarise(
+    saliva_serum.all = sum(saliva > 0 & blood_plasma > 0) / sum(blood_plasma > 0),
+    saliva_pancreas.all = sum(saliva > 0 & pancreas > 0) / sum(pancreas > 0),
+    saliva_tumor.all = sum(saliva > 0 & pancreas_tumor > 0) / sum(pancreas_tumor > 0),
+    feces_pancreas.all = sum(feces > 0 & pancreas > 0) / sum(pancreas > 0),
+    feces_tumor.all = sum(feces > 0 & pancreas_tumor > 0) / sum(pancreas_tumor > 0),
+    pancreas_tumor.all = sum(pancreas > 0 & pancreas_tumor > 0) / sum(pancreas_tumor > 0),
+    serum_tumor.all = sum(blood_plasma > 0 & pancreas_tumor > 0) / sum(pancreas_tumor > 0)
+  ) %>%
+  full_join(tmp.prevalence, by="ASV") %>%
+  left_join(data.taxonomy.sub, by="ASV") %>%
+  as.data.frame() -> data.prevalence
+data.prevalence$print.name <- factor(as.character(data.prevalence$print.name), levels=as.character(data.prevalence$print.name)[order(data.prevalence$negctr.all, data.prevalence$print.name, data.prevalence$pancreastumor.all)])
+
+#Gather to long format
+data.prevalence %>%
+  filter(negctr.tissue == 0) %>%
+#  filter(negctr.all == 0) %>%
+  select(-consensus_taxonomy, -domain, -size) %>%
+  gather("site", "prevalence", -ASV, -print.name, -phylum, -class, -order, -family, -genus, -species, -specI, -conf, -mismatches, -alignment_length, -seq_id) %>%
+  separate(site, c("material", "type"), sep="\\.", fill="right", remove = F) %>%
+  separate(material, c("source", "sink"), sep="_", fill="right", remove = F) -> data.prevalence.long
+data.prevalence.long$source <- factor(data.prevalence.long$source, levels=c("negctr", "pancreas", "pancreastumor", "duodenum", "serum", "saliva", "feces"))
+```
+
+Plot general prevalence across sites.
+
+```{r, fig.width=12, fig.height=12}
+data.prevalence.long %>%
+  filter(site %in% c("negctr.all", "saliva.CTR", "saliva.PC", "feces.CTR", "feces.PC", "serum.CTR", "serum.PC", "pancreas.all", "pancreastumor.all", "duodenum.all")) %>%
+  ggplot(aes(x=prevalence, y=print.name, colour=source, group=print.name, shape=type)) +
+    geom_vline(xintercept = 0, colour="grey") +
+    geom_point(alpha=0.8, size=2) +
+    geom_line() +
+    scale_color_brewer(palette = "Paired") +
+    facet_grid(. ~ source) +
+    theme_minimal() +
+    theme(axis.title.y = element_blank()) -> curr.plot
+print(curr.plot)
+
+data.prevalence.long %>%
+  filter(site %in% c("negctr.all", "saliva.CTR", "saliva.PC", "feces.CTR", "feces.PC", "serum.CTR", "serum.PC", "pancreas.all", "pancreastumor.all", "duodenum.all")) %>%
+  ggplot(aes(y=prevalence, x=order, colour=source, fill=source)) +
+    geom_hline(yintercept = 0, colour="grey") +
+    #geom_boxplot(outlier.colour = NA, alpha=0.2, aes(fill=source), ) +
+    geom_jitter(width = 0.2, alpha=0.8, size=2) +
+    scale_color_brewer(palette = "Paired") +
+    scale_fill_brewer(palette = "Paired") +
+    coord_flip() +
+    facet_grid(. ~ source) +
+    theme_minimal() +
+    theme(axis.title.y = element_blank()) -> curr.plot
+print(curr.plot)
+
+ggsave(curr.plot, file=paste0(PARAM$folder.results, "16S/tissue_16S.all_materials.asv.pdf"), height = 15, width = 12, useDingbats=F)
+```
+
+Plot source-sink prevalences
+
+```{r, fig.width=12, fig.height=12}
+data.prevalence.long %>%
+  filter(site %in% c("saliva_serum.all", "saliva_pancreas.all", "saliva_tumor.all", "feces_pancreas.all", "feces_tumor.all", "pancreas_tumor.all", "serum_tumor.all")) %>%
+  ggplot(aes(x=prevalence, y=print.name, colour=sink, group=print.name)) +
+    geom_vline(xintercept = 0, colour="grey") +
+    geom_jitter(alpha=0.8, size=2, height=0.2, width=0) +
+    #geom_line() +
+    scale_color_brewer(palette = "Paired") +
+    facet_grid(. ~ source) +
+    theme_minimal() +
+    theme(axis.title.y = element_blank()) -> curr.plot
+print(curr.plot)
+
+data.prevalence.long %>%
+  filter(site %in% c("saliva_serum.all", "saliva_pancreas.all", "saliva_tumor.all", "feces_pancreas.all", "feces_tumor.all", "pancreas_tumor.all", "serum_tumor.all") & sink == "tumor" & source %in% c("pancreas", "saliva", "feces")) %>%
+  ggplot(aes(y=prevalence, x=order, colour=sink, group=print.name)) +
+    geom_hline(yintercept = 0, colour="grey") +
+    geom_jitter(alpha=0.8, size=2, width=0.2) +
+    #geom_line() +
+    scale_color_brewer(palette = "Paired") +
+    coord_flip() +
+    facet_grid(. ~ source) +
+    theme_minimal() +
+    theme(axis.title.y = element_blank()) -> curr.plot
+print(curr.plot)
+ggsave(curr.plot, file=paste0(PARAM$folder.results, "16S/tissue_16S.source_sink.asv.pdf"), height = 12, width = 12, useDingbats=F)
+```
+
+```{r, fig.height=8, fig.width=8}
+data.prevalence.long %>%
+  filter(site %in% c("saliva_serum.all", "saliva_pancreas.all", "saliva_tumor.all", "feces_pancreas.all", "feces_tumor.all", "pancreas_tumor.all", "serum_tumor.all") & sink == "tumor" & source %in% c("pancreas", "saliva", "feces")) %>%
+  ggplot(aes(y=prevalence, x=order, colour=source, group=source)) +
+    geom_hline(yintercept = 0, colour="grey") +
+    geom_point(position=position_jitterdodge(jitter.width=0.3), alpha=0.8, size=2) +
+    #geom_line() +
+    scale_color_manual(values=c("#33a02c", "#a6cee3", "#fdbf6f")) +
+    ylab("fraction of individuals with paired observations") +
+    coord_flip() +
+    facet_grid(. ~ source) +
+    theme_minimal() +
+    theme(axis.title.y = element_blank()) -> curr.plot
+print(curr.plot)
+ggsave(curr.plot, file=paste0(PARAM$folder.results, "16S/tissue_16S.source_sink.tumor.asv.pdf"), height = 10, width = 8, useDingbats=F)
+```
+
+Plot prevalences of pre-selected taxa.
+
+```{r, fig.width=6, fig.height=6}
+whitelist.asv <- c(
+  rownames(data.taxonomy.asv)[!is.na(data.taxonomy.asv$genus) & data.taxonomy.asv$genus == "Bifidobacterium"],
+  rownames(data.taxonomy.asv)[!is.na(data.taxonomy.asv$genus) & data.taxonomy.asv$genus == "Veillonella"],
+  rownames(data.taxonomy.asv)[!is.na(data.taxonomy.asv$genus) & data.taxonomy.asv$genus == "Akkermansia"],
+  rownames(data.taxonomy.asv)[!is.na(data.taxonomy.asv$genus) & data.taxonomy.asv$genus == "Haemophilus"],
+  rownames(data.taxonomy.asv)[!is.na(data.taxonomy.asv$genus) & data.taxonomy.asv$genus == "Parvimonas"],
+  rownames(data.taxonomy.asv)[!is.na(data.taxonomy.asv$genus) & data.taxonomy.asv$genus == "Streptococcus"],
+  rownames(data.taxonomy.asv)[!is.na(data.taxonomy.asv$genus) & data.taxonomy.asv$genus == "Lactobacillus"],
+  rownames(data.taxonomy.asv)[!is.na(data.taxonomy.asv$genus) & data.taxonomy.asv$genus == "Rothia"],
+  rownames(data.taxonomy.asv)[!is.na(data.taxonomy.asv$genus) & data.taxonomy.asv$genus == "Actinomyces"],
+  rownames(data.taxonomy.asv)[!is.na(data.taxonomy.asv$family) & data.taxonomy.asv$family == "Enterobacteriaceae"],
+  rownames(data.taxonomy.asv)[!is.na(data.taxonomy.asv$family) & data.taxonomy.asv$family == "Porphyromonadaceae"],
+  rownames(data.taxonomy.asv)[!is.na(data.taxonomy.asv$order) & data.taxonomy.asv$order == "Clostridiales"]
+)
+
+data.prevalence %>%
+  filter(negctr.tissue == 0 & ASV %in% whitelist.asv) %>%
+  select(-consensus_taxonomy, -domain, -size) %>%
+  gather("site", "prevalence", -ASV, -print.name, -phylum, -class, -order, -family, -genus, -species, -specI, -conf, -mismatches, -alignment_length, -seq_id, -pancreastumor.all) %>%
+  filter(site %in% c("pancreas.all", "saliva.CTR", "saliva.PC", "feces.CTR", "feces.PC")) -> data.prevalence.long
+
+#Assign tax labels for all levels of intnerest
+data.prevalence.long$tax.label <- "other"
+data.prevalence.long$tax.label[data.prevalence.long$order == "Clostridiales"] <- "Clostridiales"
+data.prevalence.long$tax.label[data.prevalence.long$family == "Porphyromonadaceae"] <- "Porphyromonadaceae"
+data.prevalence.long$tax.label[data.prevalence.long$family == "Enterobacteriaceae"] <- "Enterobacteriaceae"
+data.prevalence.long$tax.label[data.prevalence.long$genus == "Actinomyces"] <- "Actinomyces"
+data.prevalence.long$tax.label[data.prevalence.long$genus == "Rothia"] <- "Rothia"
+data.prevalence.long$tax.label[data.prevalence.long$genus == "Lactobacillus"] <- "Lactobacillus"
+data.prevalence.long$tax.label[data.prevalence.long$genus == "Streptococcus"] <- "Streptococcus"
+data.prevalence.long$tax.label[data.prevalence.long$genus == "Parvimonas"] <- "Parvimonas"
+data.prevalence.long$tax.label[data.prevalence.long$genus == "Haemophilus"] <- "Haemophilus"
+data.prevalence.long$tax.label[data.prevalence.long$genus == "Akkermansia"] <- "Akkermansia"
+data.prevalence.long$tax.label[data.prevalence.long$genus == "Veillonella"] <- "Veillonella"
+data.prevalence.long$tax.label[data.prevalence.long$genus == "Bifidobacterium"] <- "Bifidobacterium"
+
+data.prevalence.long$site[data.prevalence.long$site == "pancreas.all"] <- "pancreas.healthy"
+data.prevalence.long$site <- factor(data.prevalence.long$site, levels=c("pancreas.healthy", "saliva.CTR", "saliva.PC", "feces.CTR", "feces.PC"))
+
+site.colours <- c("#33a02c", "#a6cee3", "#1f78b4", "#fdbf6f", "#ff7f00")
+names(site.colours) <- levels(data.prevalence.long$site)
+for (s in levels(data.prevalence.long$site)) {
+  data.prevalence.long %>%
+  filter(site == s) %>%
+  ggplot(aes(x=prevalence, y=pancreastumor.all)) +
+    geom_point(alpha=0.8, size=2, colour=site.colours[s]) +
+    geom_abline(slope=1, intercept = 0, colour="grey", alpha=0.6) +
+    ylab("prevalence in pancreatic tumors") +
+    xlab(paste("prevalence in", s)) +
+    facet_wrap(. ~ tax.label) +
+    theme_minimal() -> curr.plot
+  print(curr.plot)
+  ggsave(curr.plot, file=paste0(PARAM$folder.results, "16S/tissue_16S.prevalence.selected_asvs.", s, ".pdf"), height = 8, width = 8, useDingbats=F)
+}
+```
+
+For each taxon, test for the enrichment of couplings between respective pairs of sample types, including negative controls.
+
+```{r}
+#First, define subjects/samples of interest for each pair of sample materials
+#=> subjects with paired observations within individual across sites
+#tmp.data.sample <- data.sample
+#tmp.data.sample$material2 <- tmp.data.sample$material
+#tmp.data.sample$material2[tmp.data.sample$material2 %in% c("pancreas.negative_control", "blood_plasma.negative_control")] <- "negctr"
+c.combn <- t(combn(c("saliva", "feces", "blood_plasma", "duodenum", "pancreas", "pancreas_tumor"), 2))
+samples.oi <- apply(c.combn, 1, function(m) {
+  data.sample %>%
+    filter(material %in% m) %>%
+    group_by(subject_id) %>%
+    filter(sum(n()) >= 2) %>%
+    pull(experiment_name)
+})
+names(samples.oi) <- apply(c.combn, 1, paste, sep=".", collapse = ".")
+
+#Define function to compute Fisher tests
+fun.fisher <- function(vec, dat) {
+  #Skip trivial cases
+  if (sum(vec) < 2) {return(data.frame(n.subj=length(vec) / 2, or=NA, p=NA))}
+  
+  #Get current per-subject sample pairs
+  dat %>%
+    group_by(subject_id) %>%
+    spread(material, experiment_name) %>%
+    as.data.frame() -> dat2
+  
+  #Get per-site incidence vectors
+  v1 <- vec[dat2[,2]]
+  v2 <- vec[dat2[,3]]
+  
+  if (all(v1 == 0) | all(v1 == 1) | all(v2 == 0) | all(v2 == 1)) {return(data.frame(n.subj=length(vec) / 2, or=NA, p=NA))}
+  
+  #Perform Fisher's exact test
+  c.fisher <- fisher.test(v1, v2)
+  
+  #Pass results
+  data.frame(n.subj=length(vec) / 2, or=c.fisher$estimate, p=c.fisher$p.value)
+}
+
+data.fisher <- data.frame()
+for (asv in c.asvs) {
+#for (otu in c.otus[!c.otus %in% c.otus.ctr.tissue_blood]) {
+  tmp.frame <- plyr::ldply(samples.oi, function(smpl) {fun.fisher(data.asv.inc[asv, smpl], data.sample[smpl, c("subject_id", "experiment_name", "material")])})
+  tmp.frame$ASV <- asv
+  #tmp.frame$OTU <- otu
+  
+  data.fisher <- rbind(data.fisher, tmp.frame)
+}
+
+data.fisher %>%
+  filter(!is.na(p)) %>%
+  #filter(.id %in% c("duodenum.pancreas", "duodenum.pancreas_tumor", "feces.pancreas", "feces.pancreas_tumor", "pancreas.pancreas_tumor", "saliva.feces", "saliva.pancreas", "saliva.pancreas_tumor")) %>%
+  filter(.id %in% c("feces.pancreas_tumor", "pancreas.pancreas_tumor", "saliva.pancreas_tumor")) %>%
+  left_join(data.taxonomy.asv, by="ASV") %>%
+  filter(genus %in% c("Akkermansia", "Megasphaera", "Veillonella")) %>%
+  select(-seq_id, -alignment_length, -size, -domain, -consensus_taxonomy, -mismatches, -conf) %>%
+  arrange(genus)
+  filter(or > 1) %>%
+  filter(p < 0.05) %>%
+  #mutate(p=p.adjust(p, method="BH")) %>%
+  pull(p) %>% summary()
+```
+
+Generate modified upset-type plots to illustrate ASV overlap between sample types.
+
+```{r, fig.width=5, fig.height=5}
+data.asv.inc[c.asvs, data.sample %>% filter(material %in% c("saliva", "feces", "pancreas", "pancreas_tumor")) %>% pull(experiment_name)] %>%
+  as_tibble(rownames = "ASV") %>%
+  gather("experiment_name", "incidence", -ASV) %>%
+  left_join(data.sample, by="experiment_name") %>%
+  select(ASV, incidence, subject_id, material) %>%
+  spread(material, incidence) %>%
+  group_by(ASV, subject_id) %>%
+  mutate(n.sites = sum(c(!is.na(saliva), !is.na(feces), !is.na(pancreas), !is.na(pancreas_tumor)))) %>%
+  filter(n.sites > 1) %>%
+  select(-n.sites) %>%
+  mutate(tissue = pancreas, tumor = pancreas_tumor) %>%
+  select(-pancreas, -pancreas_tumor) %>%
+  mutate(
+    saliva.feces = ifelse(saliva == 1 & feces == 1, 1, ifelse(!is.na(saliva) & !is.na(feces), 0, NA)),
+    saliva.tissue = ifelse(saliva == 1 & tissue == 1, 1, ifelse(!is.na(saliva) & !is.na(tissue), 0, NA)),
+    saliva.tumor = ifelse(saliva == 1 & tumor == 1, 1, ifelse(!is.na(saliva) & !is.na(tumor), 0, NA)),
+    feces.tissue = ifelse(feces == 1 & tissue == 1, 1, ifelse(!is.na(feces) & !is.na(tissue), 0, NA)),
+    feces.tumor = ifelse(feces == 1 & tumor == 1, 1, ifelse(!is.na(feces) & !is.na(tumor), 0, NA)),
+    tissue.tumor = ifelse(tissue == 1 & tumor == 1, 1, ifelse(!is.na(tissue) & !is.na(tumor), 0, NA)),
+    saliva.feces.tissue = ifelse(saliva == 1 & feces == 1 & tissue == 1, 1, ifelse(!is.na(saliva) & !is.na(feces) & !is.na(tissue), 0, NA)),
+    saliva.feces.tumor = ifelse(saliva == 1 & feces == 1 & tumor == 1, 1, ifelse(!is.na(saliva) & !is.na(feces) & !is.na(tumor), 0, NA)),
+    feces.tissue.tumor = ifelse(feces == 1 & tissue == 1 & tumor == 1, 1, ifelse(!is.na(feces) & !is.na(tissue) & !is.na(tumor), 0, NA)),
+    saliva.feces.tissue.tumor = ifelse(saliva == 1 & feces == 1 & tissue == 1 & tumor == 1, 1, ifelse(!is.na(saliva) & !is.na(feces) & !is.na(tissue) & !is.na(tumor), 0, NA))
+  ) %>%
+  left_join(data.taxonomy.asv, by = "ASV") %>%
+  select(-seq_id, -alignment_length, -conf, -mismatches, -size) -> data.overlap
+
+
+#Generate plot
+data.overlap %>%
+#filter(!!rlang::sym(my.level) %in% my.taxon) %>%
+filter(genus %in% c("Veillonella", "Bifidobacterium", "Lactobacillus", "Streptococcus", "Akkermansia", "Haemophilus", "Actinomyces", "Rothia", "Parvimonas")) %>%
+group_by(subject_id, genus) %>%
+summarise_at(
+  vars(saliva:saliva.feces.tissue.tumor),
+  list(count = ~sum(., na.rm=T), bg = ~sum(!is.na(.)))
+) %>%
+gather("comparison", "count", -subject_id, -genus) %>%
+mutate(incidence = count > 0) %>%
+select(-count) %>%
+group_by(comparison, genus) %>%
+summarise(count = sum(incidence)) %>%
+mutate(
+  type = ifelse(grepl("_count", comparison), "overlap", "background"),
+  saliva = ifelse(grepl("saliva", comparison), count, NA),
+  feces = ifelse(grepl("feces", comparison), count, NA),
+  tissue = ifelse(grepl("tissue", comparison), count, NA),
+  tumor = ifelse(grepl("tumor", comparison), count, NA)
+) %>%
+group_by(genus) %>%
+mutate(comparison=gsub("_bg", "", gsub("_count", "", comparison))) %>%
+gather("site", "count.2", -comparison, -genus, -count, -type) %>%
+mutate(count=ifelse(count > 0 & !is.na(count.2), count, NA)) %>%
+filter(!is.na(count) | !is.na(count.2)) %>%
+mutate(comparison = ifelse(comparison %in% c("saliva", "feces", "tissue", "tumor"), "individual", comparison)) %>%
+ungroup() %>%
+mutate(
+  site = fct_relevel(site, "feces", "tumor", "tissue", "saliva"),
+  comparison = fct_relevel(comparison, "individual", "saliva.tissue", "saliva.tumor", "saliva.feces", "saliva.feces.tissue", "saliva.feces.tumor", "saliva.feces.tissue.tumor", "feces.tissue.tumor", "feces.tumor", "feces.tissue", "tissue.tumor"),
+  genus = fct_relevel(genus, "Veillonella", "Bifidobacterium", "Lactobacillus", "Streptococcus", "Akkermansia", "Haemophilus", "Actinomyces", "Rothia", "Parvimonas")
+) %>%
+mutate(comparison.genus = paste(comparison, genus)) %>%
+filter(!comparison %in% c("saliva", "feces", "tissue", "tumor") & !comparison.genus %in% comparison.genus[is.na(count)]) %>%
+ggplot(aes(x=comparison, y=site, size=count)) +
+  geom_point(data = . %>% filter(type == "background"), colour="#737373", alpha=1) +
+  geom_point(data = . %>% filter(type == "overlap"), aes(colour=genus), show.legend = F) +
+  geom_line(data = . %>% filter(type == "overlap" & comparison != "individual"), aes(group=comparison, colour=genus), size=0.5, show.legend = F) +
+  scale_color_brewer(palette = "Set3") +
+  #ggtitle(my.taxon) +
+  labs(size = "individuals") +
+  facet_wrap(. ~ genus, nrow=3) +
+  theme_minimal() +
+  theme(
+    axis.title = element_blank(),
+    axis.text.x = element_blank(),
+    #axis.text.x = element_text(angle=45, hjust=1),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank()
+  ) +
+  NULL -> p.overlap
+
+ggsave(p.overlap, file=paste0(PARAM$folder.results, "16S/tissue_16S.ASV_overlap_between_sites.pdf"), height = 8, width = 8, useDingbats=F)
+```
+
+
+
+

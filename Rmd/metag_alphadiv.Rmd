@@ -1,0 +1,319 @@
+---
+title: "Pancreatic Cancer Metagenomics Alpha Diversity Analysis"
+output: html_document
+---
+
+This document outlines the alpha diversity analysis on the pancreatic cancer 
+metagenomic data of 100 saliva and 136 stool samples
+
+Calculate alpha diversities (Hill Diversities) for count tables rarefied to 500 
+for oral and 1000 for stool. For each sample, diversities at Hill numbers 
+q=0 (richness), 
+q=1 (exp(Shannon))  
+q=2 (inverse Simpson) 
+Hill-based evenness for q=1  
+Hill-based evenness for q=2 are computed.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r loadLibrary, message=FALSE, warning=FALSE, echo=FALSE}
+library(ggplot2)
+library(dplyr)
+library(reshape2)
+library(tidyverse)
+library(yaml)
+library(ggpubr)
+library(emmeans)
+library(stringr)
+library(car)
+library(corrplot)
+library(Hmisc)
+library(leaps)
+```
+
+```{r setupParameters, message=FALSE, echo=FALSE, warning=FALSE}
+# set parameters
+PARAM <- list()
+PARAM$folder.R <- paste0(getwd(), "/")
+PARAM$folder <- gsub("Rmd/", "", PARAM$folder.R)
+PARAM$folder.files <- paste0(PARAM$folder, "files/")
+PARAM$folder.Rdata <- paste0(PARAM$folder, "Rdata/")
+PARAM$folder.results <- paste0(PARAM$folder, "results/")
+
+# load files
+load(paste0(PARAM$folder.Rdata, "metag.pc.Rdata"))
+
+# load functions
+source("https://raw.githubusercontent.com/defleury/Toolbox_16S/master/R/function.alpha_diversity.R")
+source("https://raw.githubusercontent.com/defleury/Toolbox_16S/master/R/function.rarefaction.R")
+
+dim(motu.abs.3mg)
+# filter
+motu <- motu.abs.3mg[rowSums(motu.abs.3mg > 0) >= 3, colSums(motu.abs.3mg) >= 500]
+
+# split
+feat.total.3mg.st <- motu[,rownames(meta.st) ]
+feat.total.3mg.or <- motu[, which(colnames(motu) %in%  rownames(meta.or))] 
+# remove unmapped fraction
+rownames(feat.total.3mg.st)[1] -> remove
+feat.total.3mg.st <- feat.total.3mg.st[!rownames(feat.total.3mg.st) %in% remove, ]
+feat.total.3mg.or <- feat.total.3mg.or[!rownames(feat.total.3mg.or) %in% remove, ]
+#metadata
+meta.st <- meta.st[colnames(feat.total.3mg.st), ]
+meta.or <- meta.or[colnames(feat.total.3mg.or), ] # choose complee cases
+
+feat.abs=cbind(feat.total.3mg.st, feat.total.3mg.or)
+dim(feat.abs)
+```
+
+
+```{r rarefaction, echo=FALSE, warning=FALSE}
+# Function: rarefaction_analysis
+# use absolute abundance for rarefaction
+# Input: count table, rarefaction steps, iterations per step (optional), Hill q to perform
+data.rarefaction <- rarefaction(motu.abs.3mg.f, 
+                                steps=c(seq(0.05, 0.09, by=0.01), 
+                                        seq(0.1, 0.9, by=0.1), 0.99), 
+                                iterations=100)
+data.rarefaction$code <- str_sub(data.rarefaction$sample.name, start= -2)
+data.rarefaction$code <- replace(data.rarefaction$code,
+                                 data.rarefaction$code=="OR", "saliva")
+data.rarefaction$code <- replace(data.rarefaction$code, 
+                                 data.rarefaction$code=="ST", "stool")
+
+# plot rarefaction curve
+curr.plot <- ggplot(data.rarefaction, aes(x=N.seq, y=N.obs)) +
+  geom_line(alpha=0.4, aes(group=sample.name)) +
+  xlab("Number of Sequences Sampled") +
+  ylab("Number of Taxa") +
+  facet_wrap(~ code, ncol=2) +
+  theme_bw()
+print(curr.plot)
+ggsave(curr.plot, 
+       filename=paste0(PARAM$folder.results, "rarefaction.curve.pdf"), 
+       width = 20, height=10)
+```
+###############################################################################
+Downsampling stool and saliva samples
+###############################################################################
+```{r warning=FALSE}
+# STOOL
+# look at the distribution to check numbers for stool:
+quantile(colSums(feat.total.3mg.st), seq(0,1,0.05))
+# for stool 1500 looks reasonable,121/136 samples pass
+length(which(colSums(feat.total.3mg.st) > 1200))
+# after filtering and removing samples with less than 1500 reads:
+quantile(colSums(rarefied_ST), seq(0,1,0.05))
+
+# SALIVA
+# look at the distribution to check numbers for saliva:
+quantile(colSums(feat.total.3mg.or), seq(0,1,0.05))
+# for stool 500 looks reasonable, 93/100 samples pass
+length(which(colSums(feat.total.3mg.or) > 500))
+# after filtering and removing samples with less than 500 reads:
+quantile(colSums(rarefied_OR), seq(0,1,0.05))
+```
+
+###############################################################################
+Hill diversity: Input: count table, (relative) rarefaction steps, 
+iterations per step (optional), Hill q to perform
+Plot alpha diversity measures based on rarefied read counts
+###############################################################################
+
+```{r plot alpha diversity, echo=FALSE, warning=FALSE} 
+# Calculate rarefied Hill diversity by using raw counts
+calculate.hill <- function(df.rar, size.n){
+  Hill <- Hill_Diversity.rarefied(df.rar, size=size.n, iterations=100, q.H=c(0, 1, 2))
+  # get some statistics
+  print(summary(Hill$q.0))
+  print(summary(Hill$q.1))
+  print(summary(Hill$q.2))
+  colnames(Hill) = c("Sample", "Richness", "exp(Shannon)", "inv(Simpson)") 
+  Hill[, "evenness (q1)"] <- Hill$`exp(Shannon)`/ Hill$Richness
+  Hill.m <- merge(Hill, metag, by.x="Sample", by.y="row.names", all.x=TRUE)
+  return(Hill.m)
+}
+
+Hill_ST <- calculate.hill(feat.total.3mg.st, 1200)
+Hill_OR <- calculate.hill(feat.total.3mg.or, 500)
+
+# combine files
+Hill <- rbind(Hill_ST, Hill_OR)
+Hill$library_size <- metadata.g$library_size[match(Hill$Sample, rownames(metadata.g))]
+# higher inverse Simpson value corresponds to higher diversity
+Hill <- Hill %>%
+  mutate(library_size=as.factor(
+    cut(Hill$library_size, 
+        breaks = quantile(Hill$library_size), 
+        labels=c(1,2,3,4))))
+```
+
+```{r warning=FALSE}
+df.plot= melt(Hill, measure.vars=c("Richness", "exp(Shannon)", "inv(Simpson)"),
+              variable.name="Diversity_Type")
+
+df.plot2= melt(Hill, measure.vars=c("evenness (q1)"), 
+              variable.name="Diversity_Type")
+################################################################################
+# pairs for wilcox test on plot
+my_comparisons <- list( c("Pancreatitis", "PC"), 
+                        c("Pancreatitis", "CTR"), 
+                        c("PC", "CTR") )
+cbPalette <- c("#0571b0","#f4a582","#ca0020")
+# plotting
+p.richness <- ggplot(data = df.plot, aes(x=subject_disease_status, y=value)) + 
+  scale_fill_manual(values=cbPalette) +
+  geom_point(aes(y=value) ) +
+  geom_boxplot(aes(fill = subject_disease_status)) + 
+  scale_y_continuous(breaks = scales::pretty_breaks(4), limits = c(0, NA)) +
+  xlab("") + ylab("alpha diversity measure") + 
+  ggtitle("Alpha Diversity Measurements Eveness") +
+  stat_compare_means(comparisons = my_comparisons) + # wilcox.test p-value
+  stat_compare_means(method = "anova", label.y = 300) +  # global anova
+  facet_grid(environment_material ~ Diversity_Type, scale="free") +
+  theme_classic() + 
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+p.richness
+
+p.eveness <- ggplot(data = df.plot2, aes(x=subject_disease_status, y=value)) + 
+  scale_fill_manual(values=cbPalette) +
+  geom_point(aes(y=value) ) +
+  geom_boxplot(aes(fill = subject_disease_status)) + 
+  scale_y_continuous(breaks = scales::pretty_breaks(4), limits = c(0, NA)) +
+  xlab("") + ylab("alpha diversity measure") + 
+  ggtitle("Alpha Diversity Measurements Eveness") +
+  stat_compare_means(comparisons = my_comparisons) + # wilcox.test p-value
+  stat_compare_means(method = "anova", label.y = 0) +  # global anova
+  facet_grid(environment_material ~ Diversity_Type, scale="free") +
+  theme_classic() + 
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+p.eveness
+
+# save the plots
+ggsave(filename=paste0(PARAM$folder.results, "Alpha Diversity Measure Richness.pdf"), 
+       plot=p.richness, width = 8, height = 8, useDingbats=FALSE)
+ggsave(filename=paste0(PARAM$folder.results, "Alpha Diversity Measure Eveness.pdf"), 
+       plot=p.eveness, width = 5, height = 8, useDingbats=FALSE)
+```
+
+###############################################################################
+ANOVA Analysis 
+###############################################################################
+
+```{r warning=FALSE}
+# perform anova
+calculate.anova <- function(df.hill){
+  # keep only PDAC and CTR
+  df= (df.hill[df.hill$subject_disease_status!="Pancreatitis",])
+  wilcox.test(`Richness` ~ subject_disease_status, data = df) # W = 1483, p-value = 0.8647
+  
+  # anova
+  summary(aov(rank~subject_disease_status, 
+              data=df.hill %>% 
+                mutate(rank=rank(Richness))))
+  
+    for(name in c("Richness", "exp(Shannon)", "inv(Simpson)")){
+      print(name)
+      writeLines("---------------")
+      aov.q0 <- aov(df[,name] ~ subject_disease_status + TJaundice_comp + alldiab +
+                      read_count + center + smoker + TdirectB_comp + alcohol_status + obese + 
+                      metformin.med + asthma + allacid + allrheum + allhburn + allhbp + cholesterol, 
+                      data=df)
+    
+      print(summary(aov.q0)) 
+      ref.table <- emmeans(aov.q0, c("subject_disease_status"))
+      writeLines("---------------")
+      print(pairs(ref.table))
+    }
+}
+calculate.anova(Hill_ST)
+calculate.anova(Hill_OR)
+```
+
+###############################################################################
+Does any variable have an impact alpha diversity measurements of the microbiota?
+###############################################################################
+
+```{r warning=FALSE}
+library("car")
+#Do a full model each for ST and OR
+aov.full.ST <- Anova(lm(Richness ~ center + age_years + gender + TJaundice_comp + 
+                          alldiab + obese + alcohol_status + periodontitis + smoker + 
+                          cholesterol + Jaundice_comp + metformin.ever + library_size +
+                          TdirectB_comp + TtotalB_comp + antibiotic + asparmed +  
+                          asthma + allacid + allrheum + probiot + cortmed +
+                          allhburn + allhbp + recession + FHPDAC +  abmedication +
+                          cholmedication + salicylic.ever + paracetamol.ever + coded_ca19 +
+                          subject_disease_status, data=alpha.div.ST), type=2) %>%
+  broom::tidy()
+
+aov.full.OR <- Anova(lm(Richness ~ center + age_years + gender + TJaundice_comp + 
+                          alldiab + obese + alcohol_status + periodontitis + smoker + 
+                          cholesterol + Jaundice_comp + metformin.ever + library_size +
+                          TdirectB_comp + TtotalB_comp + antibiotic + asparmed +  
+                          asthma + allacid + allrheum + probiot + cortmed +
+                          allhburn + allhbp + recession + FHPDAC +  abmedication +
+                          cholmedication + salicylic.ever + paracetamol.ever + coded_ca19 +
+                          subject_disease_status, data=alpha.div.OR), type=2) %>%
+  broom::tidy()
+
+# does metadata impact the Richness or expShannon diversity of the microbiota?
+# Model the known risk factors
+aov.risk.ST <- Anova(lm(Richness ~ center + age_years + gender + TJaundice_comp + smoker +
+                        alcohol_status + alldiab + periodontitis + cholesterol + library_size + 
+                        subject_disease_status, data=alpha.div.ST), type=2) %>% broom::tidy()
+
+aov.risk.OR <- Anova(lm(Richness ~ center + age_years + gender + TJaundice_comp + smoker + 
+                        alcohol_status + alldiab + periodontitis + cholesterol +library_size + 
+                        subject_disease_status, data=alpha.div.OR), type=2) %>% broom::tidy()
+
+collect.confounders <- data.frame()
+for (i in idx) {
+ 
+  # calculate anova for stool 
+  lm.ST <- lm(
+    substitute(Richness~ as.factor(i), list(i = as.name(i))),
+    data = alpha.div.ST, na.action=na.omit)
+  aov.ST <- Anova(lm.ST) %>% broom::tidy() %>% 
+    mutate(site = "stool", metric="richness")
+  aov.ST <- aov.ST[1,]
+  aov.ST$term <- i
+ 
+   # calculate anova for saliva 
+  lm.OR <- lm(
+    substitute(Richness~ as.factor(i), list(i = as.name(i))),
+    data = alpha.div.OR, na.action=na.omit)
+  aov.OR <- Anova(lm.OR) %>% broom::tidy() %>% 
+    mutate(site = "saliva", metric="richness")
+  aov.OR <- aov.OR[1,]
+  aov.OR$term <- i
+  # collect data
+  collect.confounders <- rbind(
+    collect.confounders,
+    aov.ST,
+    aov.OR
+  )
+}
+# fdr correction 
+collect.confounders$p.adj <- p.adjust(collect.confounders$p.value)
+print(collect.confounders)
+```
+
+```{r}
+# save data
+save(Hill, rarefied_ST, rarefied_OR, aov.full.ST, aov.full.OR, 
+     collect.confounders, eveness.st, eveness.or,
+     file=paste0(PARAM$folder.Rdata, "metag.alphadiv.Rdata"))
+```
+
+```{r session_info}
+sessionInfo()
+```
+

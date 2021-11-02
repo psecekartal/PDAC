@@ -1,0 +1,571 @@
+---
+title: "Pancreatic Cancer Microbiome, Oral-Gut Transmission"
+author: "Sebastian Schmidt"
+date: "2018-10-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Prepare Environment
+
+Attach relevant packages
+
+```{r}
+library("Matrix", warn.conflicts=F, quietly=T)
+library("tidyverse", warn.conflicts=F, quietly=T)
+library("effsize", warn.conflicts=F, quietly=T)
+library("reshape2", warn.conflicts=F, quietly=T)
+library("ggplot2", warn.conflicts=F, quietly=T)
+library("ggalluvial", warn.conflicts=F, quietly=T)
+library("gridExtra", warn.conflicts=F, quietly=T)
+library("cowplot", warn.conflicts=F, quietly=T)
+library("RColorBrewer", warn.conflicts=F, quietly=T)
+```
+
+Set parameters.
+
+```{r}
+PARAM <- list()
+PARAM$folder.R <- paste0(getwd(), "/")
+PARAM$folder.base <- gsub("Rmd/", "", PARAM$folder.R)
+PARAM$folder.data <- paste0(PARAM$folder.base, "data/")
+PARAM$folder.metadata <- paste0(PARAM$folder.base, "metadata/")
+PARAM$folder.parameters <- paste0(PARAM$folder.base, "parameters/")
+PARAM$folder.results <- paste0(PARAM$folder.base, "results/")
+PARAM$folder.results_detection <- paste0(PARAM$folder.results, "detect.transmission/")
+PARAM$folder.results_quantification <- paste0(PARAM$folder.results, "quantify.transmission/")
+
+#Colours to match individual body sites
+PARAM$colour.saliva <- "#08519c"
+PARAM$colour.gut <- "#fd8d3c"
+
+#Colours to match transmitter categories
+PARAM$colour.transmitter <- "#33a02c"
+PARAM$colour.occ_transmitter <- "#b2df8a"
+PARAM$colour.non_transmitter <- "#a6cee3"
+```
+
+Set global plotting theme.
+
+```{r}
+#Theme to bw
+theme_set(theme_minimal())
+
+#Update individual aspects of the plot theme
+theme_update(axis.line=element_blank(),
+             axis.text.y=element_blank(),
+             axis.ticks=element_blank(),
+             axis.title.x=element_text(family="Helvetica", size=4),
+             axis.title.y=element_blank(),
+             legend.position="none",
+             panel.background=element_blank(),
+             panel.border=element_blank(),
+             #panel.grid.major=element_blank(),
+             panel.grid.minor=element_blank(),
+             plot.background=element_blank(),
+             plot.margin=unit(c(0.1, 0.2, 0.1, 0), "cm")
+)
+
+#Define a function for summary statistics per taxon
+fun.summary <- function(vec) {data.frame(ymin=quantile(vec)[2], y=median(vec), ymax=quantile(vec)[4])}
+```
+
+Load data.
+
+```{r}
+#Load sample data
+load(paste0(PARAM$folder.metadata, "metaG.oral_fecal.data_sample.Rdata"))
+#Load specI abundance data
+load(paste0(PARAM$folder.data, "metaG.oral_fecal.data_mOTU_rel.Rdata"))
+#Load coverage data
+load(paste0(PARAM$folder.data, "metaG.oral_fecal.data_coverage.Rdata"))
+#Load taxonomy data
+load(paste0(PARAM$folder.data, "metaG.oral_fecal.data_taxonomy.Rdata"))
+#Load transmission detection results
+load(paste0(PARAM$folder.results, "data.detect.transmission.RData"))
+```
+
+Parse sample data and re-structure into per-subject frame.
+
+```{r}
+#data.subject <- aggregate(subject ~ final_eligibility + status + center + age + sex + smokingstatus + cpy1 + alcohol_status + alldiab + diabcat + obese + panctype + asthma + nasal + allacid + allhburn + allrheum + allhbp + cholesterol + abmedication + antibiotic + asparmed + salicylic.ever + paracetamol.ever + cortmed + diabdiet + diabin + diabmed + metformin.ever + probiot + periodontitis + recession + FHPDAC, data.sample, mean, na.action = na.pass)
+
+data.sample %>%
+  group_by(subject_id) %>%
+  select(-sample_alias, -experiment_name, -read_count, -aliases.x, -body_site) %>%
+  summarise_all(funs(first(na.omit(.)))) -> data.subject
+
+rownames(data.subject) <- as.character(data.subject$subject_id)
+
+data.subject$sample.oral <- rownames(data.sample)[data.sample$body_site == "saliva"][match(data.subject$subject_id, data.sample[data.sample$body_site == "saliva", "subject_id"])]
+data.subject$sample.gut <- rownames(data.sample)[data.sample$body_site == "feces"][match(data.subject$subject_id, data.sample[data.sample$body_site == "feces", "subject_id"])]
+```
+
+Parse per-subject disease classification scores.
+
+```{r}
+tmp.pred <- read.delim(paste0(PARAM$folder.results, "pc.st.cancer.clrnorm.lasso_ll.2mg.preds.tsv"), sep=" ") %>% select(mean_pred) %>% mutate(sample.gut = rownames(.))
+
+data.subject %>%
+  left_join(tmp.pred, by="sample.gut") -> data.subject
+```
+
+Parse list of taxa that are univariately associated to PC vs CTR status.
+
+```{r}
+file.univariate.PC_CTR <- paste0(PARAM$folder.parameters, "metaG.edgeR.PC_CTR.univariate_assoc.tsv")
+data.PC_CTR <- read.table(file.univariate.PC_CTR, sep="\t", header=T)
+```
+
+Parse taxa annotations and re-filter all data structures.
+
+```{r}
+#Sub-select data.taxa.transmission on saliva <-> gut only (the other site combinations are not relevant for this figure)
+my.data.taxa.transmission <- data.taxa.transmission
+
+data.taxa <- data.taxa.transmission
+
+#Get prevalence of each taxon in each site
+data.taxa$prevalence.oral <- rowSums(data.mOTU.rel[rownames(data.taxa), data.sample$body_site == "saliva"] > 10^-6) / sum(data.sample$body_site == "saliva")
+data.taxa$prevalence.gut <- rowSums(data.mOTU.rel[rownames(data.taxa), data.sample$body_site == "feces"] > 10^-6) / sum(data.sample$body_site == "feces")
+
+my.data.taxa <- data.taxa[data.taxa$repID %in% unique(data.detect_transmission$Tax_ID), ]
+
+#Annotate number of subjects with evidence for transmission, and subset
+tmp <- plyr::ddply(data.detect_transmission, c("Tax_ID", "Taxon"), function(df) {
+  data.frame(
+    transmitted.in_subjects = sum(df$transmission.score.p.adj < 0.05)
+  )
+})
+my.data.taxa <- my.data.taxa[as.character(my.data.taxa$repID) %in% as.character(tmp$Tax_ID), ]
+my.data.taxa[match(as.character(my.data.taxa$refOTUs), as.character(tmp$Taxon)), "transmitted.in_subjects"] <- tmp$transmitted.in_subjects
+my.data.taxa$transmitter.in_some <- my.data.taxa$transmitted.in_subjects > 0
+my.data.taxa.full <- my.data.taxa
+```
+
+Filter to relevant set of taxa
+
+```{r}
+#Filter for taxa with sufficient data for dependable transmission detection
+curr.n_proc <- plyr::ddply(data.detect_transmission, "Tax_ID", nrow)
+keep.by_detectability <- curr.n_proc$Tax_ID[curr.n_proc$V1 > 5]
+
+#Filter taxa by prevalence in oral and gut samples
+keep.by_prevalence <- my.data.taxa.full$prevalence.oral > 0.02 & my.data.taxa.full$prevalence.gut > 0.02
+
+#Subset by combining these filters
+#keep.taxa <- as.character(my.data.taxa$repID)[keep.by_prevalence & my.data.taxa$repID %in% keep.by_detectability]
+keep.taxa <- as.character(my.data.taxa$repID)[my.data.taxa$repID %in% keep.by_detectability]
+#keep.taxa <- keep.tax_id
+my.data.taxa <- droplevels(my.data.taxa[keep.taxa, ])
+my.data.detect_transmission <- droplevels(data.detect_transmission[data.detect_transmission$Tax_ID %in% keep.taxa, ])
+#my.data.quantify_transmission <- data.quantify_transmission[data.quantify_transmission$Tax_ID %in% keep.taxa, ]
+
+#Subset specI abundance tables and report rel abd represented by selected taxa
+sub.specI.oral <- data.mOTU.rel[keep.taxa, rownames(data.sample)[data.sample$body_site == "saliva"]]
+sub.specI.gut <- data.mOTU.rel[keep.taxa, rownames(data.sample)[data.sample$body_site == "feces"]]
+```
+
+Add per-subject info to transmission detection data.frame.
+
+```{r}
+colnames(my.data.detect_transmission)[3] <- "subject_id"
+my.data.detect_transmission$subject_id <- as.character(my.data.detect_transmission$subject_id)
+data.subject %>%
+  right_join(my.data.detect_transmission) -> my.data.detect_transmission
+```
+
+Get taxa orderings.
+
+```{r}
+#=> by decreasing median transmission score
+order.by_transmission_score <- order(my.data.taxa$transmission.score.median, decreasing = T)
+#=> by transmissibility (fraction of subjects w/ TS > median(bg))
+order.by_transmissibility <- order(my.data.taxa$transmission.score.cohen_d, decreasing = T)
+#=> by transmission p value
+order.by_p_value <- order(my.data.taxa$transmission.score.wilcox.p, decreasing = F)
+#=> by transmission category, followed by transmission score
+my.data.taxa$transmitter.category <- "non-transmitter"
+my.data.taxa$transmitter.category[my.data.taxa$transmitter.in_some] <- "occasional transmitter"
+my.data.taxa$transmitter.category[my.data.taxa$transmitter] <- "transmitter"
+my.data.taxa$transmitter.category <- factor(my.data.taxa$transmitter.category, levels=c("non-transmitter", "occasional transmitter", "transmitter"))
+order.by_category <- order(my.data.taxa$transmitter.category, my.data.taxa$transmission.score.median, decreasing = T)
+
+#Define which order to use
+order.use <- order.by_category
+
+#Re-order all taxa (incl predominantly oral and fecal species)
+my.data.taxa.full$transmitter.category <- ""
+my.data.taxa.full$transmitter.category[my.data.taxa.full$prevalence.gut >= 0.1 & my.data.taxa.full$prevalence.oral <= 0.1] <- "predominantly fecal"
+my.data.taxa.full$transmitter.category[my.data.taxa.full$prevalence.gut <= 0.1 & my.data.taxa.full$prevalence.oral >= 0.1] <- "predominantly oral"
+my.data.taxa.full$transmitter.category[my.data.taxa.full$prevalence.gut > 0.1 & my.data.taxa.full$prevalence.oral > 0.1 & !my.data.taxa.full$transmitter] <- "non-transmitter"
+my.data.taxa.full$transmitter.category[my.data.taxa.full$transmitter.in_some] <- "occasional transmitter"
+my.data.taxa.full$transmitter.category[my.data.taxa.full$transmitter] <- "transmitter"
+my.data.taxa.full$transmitter.category <- factor(my.data.taxa.full$transmitter.category, levels=rev(c("predominantly oral", "transmitter", "occasional transmitter", "non-transmitter", "predominantly fecal")))
+
+#Define order
+#=> by transmission category, followed by transmission score & prevalence in oral/gut
+order.full <- order(my.data.taxa.full$transmitter.category, my.data.taxa.full$transmission.score.median, decreasing = T)
+#Re-order pred. oral and fecal taxa by decreasing oral/fecal prevalence
+sub_idx.oral <- 1:sum(my.data.taxa.full$transmitter.category == "predominantly oral", na.rm=T)
+order.full[sub_idx.oral] <- order.full[sub_idx.oral][order(my.data.taxa.full[order.full[sub_idx.oral], "prevalence.oral"], my.data.taxa.full[order.full[sub_idx.oral], "prevalence.gut"], decreasing = T)]
+sub_idx.fecal <- (nrow(my.data.taxa.full)-sum(my.data.taxa.full$transmitter.category == "predominantly fecal", na.rm=T)+1):nrow(my.data.taxa.full)
+order.full[sub_idx.fecal] <- order.full[sub_idx.fecal][order(my.data.taxa.full[order.full[sub_idx.fecal], "prevalence.gut"], my.data.taxa.full[order.full[sub_idx.fecal], "prevalence.oral"], decreasing = T)]
+```
+
+## Process Data & Generate Plots
+
+Transmission scores per taxon.
+
+```{r, fig.height=8, fig.width=10}
+plot.df <- my.data.detect_transmission[, c("Taxon", "transmission.score", "transmission.score.p.adj")]
+plot.df$logP <- -log10(plot.df$transmission.score.p.adj)
+plot.df$logP[plot.df$logP == Inf] <- max(plot.df$logP[is.finite(plot.df$logP)])
+p.transmission_scores <- ggplot(plot.df, aes(x=Taxon, y=transmission.score, colour=logP, alpha=logP)) +
+  geom_jitter(size=3, width = 0.3) +
+  geom_point(data=my.data.taxa, aes(x=refOTUs, y=transmission.score.median), size=5, colour="black", alpha=1) +
+  scale_alpha_continuous(range=c(0.2, 0.9), limits=c(0,8)) +
+  scale_colour_gradientn(colours=c("#bdbdbd", "#a1d99b", "#00441b"), values=c(0, -log10(0.05), 6) / 6) +
+  ylab("Transmission Score") +
+  geom_hline(yintercept=0, size=0.2, alpha=0.6) +
+  # geom_hline(yintercept=1.645, size=0.2, alpha=0.6) +
+  # geom_hline(yintercept=2.33, size=0.2, alpha=0.6) +
+  # geom_hline(yintercept=3.09, size=0.2, alpha=0.6) +
+  scale_y_continuous(breaks=c(qnorm(0.01), qnorm(0.1), 0, -qnorm(10^(seq(-1, -23, by=-1)))), limits = c(-2.33, 10)) +
+  #scale_x_discrete(limits=rev(levels(my.data.taxa$Scientific_Name))) +
+  scale_x_discrete(limits=as.character(my.data.taxa$refOTUs)[order.use], labels=as.character(my.data.taxa$refOTUs)[order.use]) +
+  #coord_flip() +
+  theme_minimal() +
+  theme(
+    axis.text=element_blank(),
+#    axis.title = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank()
+    #panel.grid.major.x = element_blank(),
+#    legend.position = "none"
+  ) +
+  NULL
+p.transmission_scores
+```
+
+
+Test for associations of transmission scores to co-variates and disease status. First, fit a linear model on full disease status (including pancreatitis).
+
+```{r}
+lm.full <- lm(transmission.score ~ Taxon +
+                center +
+                sex +
+                age_years +
+                smoker +
+                alcohol +
+                #comorbidity.diabetes +
+                comorbidity.obesity +
+                comorbidity.asthma +
+                #comorbidity.rhinitis +
+                comorbidity.heartburn +
+                #comorbidity.acid_regurgitation +
+                #comorbidity.high_blood_pressure +
+                #comorbidity.periodontitis +
+                comorbidity.receding_gums +
+                medication.acid_heartburn +
+                medication.anti_inflammatory +
+                medication.aspirin +
+                #medication.nsaid +
+                medication.antibiotic +
+                medication.corticoid +
+                medication.metformin +
+                status,
+                data=my.data.detect_transmission[my.data.detect_transmission$n.obs.shared > 100, ])
+anova.full <- anova(lm.full, test="F")
+anova.full.ss <- anova.full$`Sum Sq`
+anova.full.R2 <- anova.full.ss/sum(anova.full.ss)
+aov_table.full <- cbind(anova.full,PctExp=round(anova.full.R2*100, digits = 3))
+aov_table.full
+summary(lm.full)
+```
+
+Test PC:CTR for univariately PC-enriched taxa.
+
+```{r}
+lm.PC_CTR.enriched <- lm(transmission.score ~ Taxon +
+                center +
+                sex +
+                age_years +
+                smoker +
+                alcohol +
+                #comorbidity.diabetes +
+                comorbidity.obesity +
+                comorbidity.asthma +
+                #comorbidity.rhinitis +
+                comorbidity.heartburn +
+                #comorbidity.acid_regurgitation +
+                #comorbidity.high_blood_pressure +
+                #comorbidity.periodontitis +
+                comorbidity.receding_gums +
+                medication.acid_heartburn +
+                medication.anti_inflammatory +
+                medication.aspirin +
+                #medication.nsaid +
+                medication.antibiotic +
+                medication.corticoid +
+                medication.metformin +
+                status,
+                data=my.data.detect_transmission[my.data.detect_transmission$n.obs.shared > 100 & my.data.detect_transmission$status %in% c("PC", "CTR") & my.data.detect_transmission$Taxon %in% data.PC_CTR$species[data.PC_CTR$logFC > 0], ])
+
+anova.PC_CTR.enriched <- anova(lm.PC_CTR.enriched, test="F")
+anova.PC_CTR.enriched.ss <- anova.PC_CTR.enriched$`Sum Sq`
+anova.PC_CTR.enriched.R2 <- anova.PC_CTR.enriched.ss/sum(anova.PC_CTR.enriched.ss)
+aov_table.PC_CTR.enriched <- cbind(anova.PC_CTR.enriched,PctExp=round(anova.PC_CTR.enriched.R2*100, digits = 3))
+aov_table.PC_CTR.enriched
+```
+
+Plot transmission scores in cases vs controls for each univariately disease-associated taxon.
+
+```{r, fig.width=8, fig.height=10, warning=FALSE}
+#Merge data structures
+my.data.taxonomy <- data.taxonomy
+my.data.taxonomy$Tax_ID <- my.data.taxonomy$repID
+my.data.taxonomy$refOTU_cluster <- gsub("_mOTU", "OTU", my.data.taxonomy$ref_mOTU_cluster)
+my.data.detect_transmission %>%
+  left_join(my.data.taxonomy) %>%
+  filter(refOTU_cluster %in% as.character(data.PC_CTR$refOTU_cluster)) %>%
+  left_join(data.PC_CTR) %>%
+  select(Tax_ID, refOTU_cluster, species, status, transmission.score, logFC) %>%
+  gather(key="type", value="value", transmission.score, logFC) -> data.plot
+
+#Order taxa by univariate fold channge in cases vs controls
+order.logFC <- grep("refOTU", as.character(data.PC_CTR$refOTU_cluster)[order(data.PC_CTR$logFC, decreasing = T)], value=T)
+order.logFC <- order.logFC[order.logFC %in% data.plot$refOTU_cluster]
+order.logFC.names <- as.character(data.PC_CTR$species)[match(order.logFC, as.character(data.PC_CTR$refOTU_cluster))]
+
+ggplot(data.plot, aes(y=value, x=refOTU_cluster, colour=status, fill=status)) +
+  geom_boxplot(alpha=0.7) +
+  geom_point(position = position_jitterdodge(jitter.width = 0.2)) +
+  geom_hline(yintercept = 0) +
+  geom_hline(yintercept = qnorm(c(0.95, 0.99, 0.999, 0.9999)), colour="grey") +
+  scale_x_discrete(limits=rev(order.logFC), labels = rev(order.logFC.names)) +
+  scale_fill_manual(values=c("#b2df8a", "#a6cee3", "#fb9a99")) +
+  scale_colour_manual(values=c("#b2df8a", "#a6cee3", "#fb9a99")) +
+  coord_flip() +
+  facet_wrap(. ~ type) +
+  theme_minimal() +
+  theme(
+    axis.title = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank()
+  ) +
+  NULL -> p.current
+
+ggsave(p.current, width=8, height=12, filename=paste0(PARAM$folder.results, "oral_fecal_transmission.PC_assoc_taxa.pdf"), useDingbats=F, dpi=1200)
+```
+
+Plot per-covariate marginal effect sizes per taxon.
+
+```{r, message=FALSE, warning=FALSE}
+test.covariates <- c(
+  "center",
+  "sex",
+  "smoker",
+  "alcohol",
+  "comorbidity.diabetes",
+  "comorbidity.obesity",
+  "comorbidity.asthma",
+  "comorbidity.rhinitis",
+  "comorbidity.heartburn",
+  "comorbidity.acid_regurgitation",
+  "comorbidity.high_blood_pressure",
+  "comorbidity.periodontitis",
+  "comorbidity.receding_gums",
+  "medication.acid_heartburn",
+  "medication.anti_inflammatory",
+  "medication.aspirin",
+  "medication.antibiotic",
+  "medication.corticoid",
+  "medication.metformin"
+)
+collect.eff_size <- data.frame()
+for (tax.id in my.data.taxa$repID) {
+  #Subset data to current taxon
+  curr.data.detect <- my.data.detect_transmission[my.data.detect_transmission$n.obs.shared > 100 & my.data.detect_transmission$Tax_ID == tax.id, ]
+  if (nrow(curr.data.detect) < 10) {next()}
+  
+  #Calculate Spearman correlation to age_years
+  curr.test <- cor.test(curr.data.detect$age_years, curr.data.detect$transmission.score, method="spearman")
+  collect.eff_size <- rbind(
+    collect.eff_size,
+    data.frame(
+      tax.id = tax.id,
+      variable = "age_years",
+      eff.size = curr.test$estimate,
+      p.raw = curr.test$p.value
+    )
+  )
+  
+  #Calculate Spearman correlation to disease model prediction score
+  curr.test <- cor.test(curr.data.detect$mean_pred, curr.data.detect$transmission.score, method="spearman")
+  collect.eff_size <- rbind(
+    collect.eff_size,
+    data.frame(
+      tax.id = tax.id,
+      variable = "mean_pred",
+      eff.size = curr.test$estimate,
+      p.raw = curr.test$p.value
+    )
+  )
+  
+  #Perform tests for all co-variates
+  for (cv in test.covariates) {
+    if (length(unique(na.omit(as.data.frame(curr.data.detect)[, cv]))) == 2) {
+      collect.eff_size <- rbind(
+        collect.eff_size,
+        data.frame(
+          tax.id = tax.id,
+          variable = cv,
+          eff.size = cohen.d(as.formula(paste("transmission.score ~", cv)), data=curr.data.detect)$estimate,
+          p.raw = wilcox.test(as.formula(paste("transmission.score ~", cv)), data=curr.data.detect)$p.value
+        )
+      )
+    }
+  }
+  
+  #Test for effect of cancer vs pancreatitis
+  s.base <- curr.data.detect %>% filter(status == "CTR") %>% select(transmission.score) %>% pull()
+  s.test <- curr.data.detect %>% filter(status == "PC") %>% select(transmission.score) %>% pull()
+  if (length(s.base) > 1 & length(s.test) > 1) {
+    collect.eff_size <- rbind(
+      collect.eff_size,
+      data.frame(
+        tax.id = tax.id,
+        variable = "PC_vs_CTR",
+        eff.size = cohen.d(s.test, s.base)$estimate,
+        p.raw = wilcox.test(s.test, s.base)$p.value
+      )
+    )
+  }
+  
+  #Test for effect of cancer vs pancreatitis
+ s.base <- curr.data.detect %>% filter(status == "CTR") %>% select(transmission.score) %>% pull()
+  s.test <- curr.data.detect %>% filter(status == "Pancreatitis") %>% select(transmission.score) %>% pull()
+  if (length(s.base) > 1 & length(s.test) > 1) {
+    collect.eff_size <- rbind(
+      collect.eff_size,
+      data.frame(
+        tax.id = tax.id,
+        variable = "Pancreatitis_vs_CTR",
+        eff.size = cohen.d(s.test, s.base)$estimate,
+        p.raw = wilcox.test(s.test, s.base)$p.value
+      )
+    )
+  }
+}
+```
+
+Generate plot.
+
+```{r, fig.width=10, fig.height=15}
+p.eff_size <- ggplot(collect.eff_size[!is.na(collect.eff_size$eff.size), ], aes(x=eff.size, y=variable, colour=eff.size)) +
+  geom_jitter(height = 0.2, size=2, alpha=0.7) +
+  geom_point(data=aggregate(eff.size ~ variable, collect.eff_size, median, na.rm=T), size=4, colour="black", alpha=0.9) +
+  geom_vline(xintercept = 0) +
+  scale_color_gradient2(low = "#762a83", mid = "#f0f0f0", high = "#1b7837") +
+  xlab("Effect Size (Cohen's d or Spearman's rho)") +
+  #scale_x_continuous(limits = c(-2.5, 2.5)) +
+  #xlim(-2, 2) +
+  theme_minimal() +
+  theme(
+    axis.title.y = element_blank()
+  ) +
+  NULL
+p.eff_size
+ggsave(p.eff_size, width=8, height=12, filename=paste0(PARAM$folder.results, "oral_fecal_transmission.marginal_effect_sizes.pdf"), useDingbats=F, dpi=1200)
+```
+
+Explore associations between transmission and individual taxa oral-fecal tranmission in more detail.
+
+```{r}
+collect.eff_size$p <- p.adjust(collect.eff_size$p.raw, method = "BH")
+
+collect.eff_size %>% dplyr::arrange(desc(eff.size)) %>% left_join(data.taxonomy, by=c("tax.id" = "repID")) %>% select(variable, refOTUs, eff.size, p.raw, p) -> curr.eff_size
+
+curr.eff_size %>% filter(eff.size > 0.8)
+curr.eff_size %>% filter(eff.size < -0.8)
+
+curr.eff_size %>% filter(variable == "PC_vs_CTR")
+curr.eff_size %>% filter(variable == "mean_pred")
+```
+
+Plot disease prediction scores vs transmission scores for selected taxa.
+
+```{r, fig.width=5, fig.height=5}
+select.taxa <- c(
+  "216816 Bifidobacterium longum [C]",
+  "1689 Bifidobacterium dentium [C]",
+  "39777 Veillonella atypica [C]",
+  "39778 Veillonella dispar",
+  "29466 Veillonella parvula [C]",
+  "218538 Dialister invisus",
+  "187326 Megasphaera micronuciformis",
+#  "752 Pasteurella bettyae",
+  "419015 Alloscardovia omnicolens",
+#  "28128 Prevotella corporis",
+  "28037 Streptococcus mitis",
+  "113107 Streptococcus australis",
+  "1328 Streptococcus anginosus [C]",
+  "1308 Streptococcus thermophilus"
+#  "726 Haemophilus haemolyticus",
+#  "257758 Streptococcus pseudopneumoniae",
+#  "1301 Streptococcus sp. [C I-G2/I-P16]",
+#  "NA Bacteroidales gen. [C Bacteroides sp./Porphyromonas sp./Parabacteroides distasonis]"
+)
+my.data.detect_transmission %>%
+  filter(n.obs.shared > 100 & Taxon %in% select.taxa & status != "Pancreatitis") %>%
+  mutate(Taxon = fct_relevel(Taxon, select.taxa)) %>%
+  ggplot(aes(x=transmission.score, y=mean_pred, colour=status)) +
+    geom_point(size=3, alpha=0.7) +
+    geom_hline(yintercept = 0) + geom_vline(xintercept = 0) +
+    scale_color_manual(values = c("blue", "orange")) +
+    xlab("Oral-Fecal-Transmission Score") +
+    ylab("Disease Model Prediction Score") +
+    facet_wrap(~Taxon) +
+    theme_minimal() -> p.pred_vs_transmission
+p.pred_vs_transmission
+ggsave(p.pred_vs_transmission, width=8, height=8, filename=paste0(PARAM$folder.results, "oral_fecal_transmission.disease_prediction_scores.pdf"), useDingbats=F, dpi=1200)
+```
+
+
+
+Explore correlations between transmission scores and oral/fecal relative abundace.
+
+```{r}
+my.data.detect_transmission$abd.oral <- data.mOTU.rel[cbind(my.data.detect_transmission$Tax_ID, my.data.detect_transmission$sample.oral)]
+my.data.detect_transmission$abd.gut <- data.mOTU.rel[cbind(my.data.detect_transmission$Tax_ID, my.data.detect_transmission$sample.gut)]
+
+my.data.detect_transmission %>%
+  left_join(my.data.taxonomy) %>%
+  left_join(my.data.taxa) %>%
+  group_by(ref_mOTU_cluster, refOTUs, transmitter.category) %>%
+  dplyr::summarize(
+    n=n(),
+    cor.oral = cor(transmission.score, abd.oral, method="spearman", use="complete.obs"),
+    cor.gut = cor(transmission.score, abd.gut, method="spearman", use="complete.obs")
+  ) %>%
+  ggplot(aes(x=cor.gut, y=cor.oral, size=n, colour=transmitter.category)) +
+    geom_point(alpha=0.7) +
+    scale_colour_manual(values = c(PARAM$colour.non_transmitter, PARAM$colour.occ_transmitter, PARAM$colour.transmitter)) +
+    geom_hline(yintercept = 0) +
+    geom_vline(xintercept = 0) +
+    xlab("rho_Spearman (rel abd gut : trannsmission score)") +
+    ylab("rho_Spearman (rel abd oral : trannsmission score)") +
+    scale_size(trans = "sqrt") +
+    theme_minimal()
+
+```
+
+
+
+

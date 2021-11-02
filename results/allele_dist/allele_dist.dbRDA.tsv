@@ -1,0 +1,177 @@
+term	body_site	phylum	family	refOTUs	ref_mOTU_cluster	prev.oral	prev.gut	R2	p.adj
+body_site	both	1239 Firmicutes	186803 Lachnospiraceae	467210 Lachnoanaerobaculum saburreum	ref_mOTU_v2_0361	40.4	0	22.78	0.000438461538461539
+body_site	both	1239 Firmicutes	186803 Lachnospiraceae	43995 Johnsonella ignava	ref_mOTU_v2_4775	3.03	0	13.01	0.000438461538461539
+body_site	both	1239 Firmicutes	186803 Lachnospiraceae	712976 Lachnospiraceae bacterium oral taxon 082	ref_mOTU_v2_5014	66.67	3.68	8.61	0.000438461538461539
+body_site	both	1239 Firmicutes	186803 Lachnospiraceae	712991 Lachnospiraceae bacterium oral taxon 500	ref_mOTU_v2_4552	11.11	0	17.29	0.000438461538461539
+body_site	both	1239 Firmicutes	31977 Veillonellaceae	39777 Veillonella atypica [C]	ref_mOTU_v2_0561	98.99	63.24	2.08	0.000438461538461539
+body_site	both	1239 Firmicutes	1300 Streptococcaceae	1308 Streptococcus thermophilus	ref_mOTU_v2_0219	74.75	86.76	19.58	0.000438461538461539
+body_site	both	1239 Firmicutes	1300 Streptococcaceae	999425 Streptococcus sp. F0442	ref_mOTU_v2_5298	84.85	38.24	1.82	0.000438461538461539
+body_site	both	201174 Actinobacteria	2049 Actinomycetaceae	1654 Actinomyces sp. [C ICM58/oral taxon 172]	ref_mOTU_v2_0377	96.97	38.97	6.05	0.000438461538461539
+body_site	both	976 Bacteroidetes	171551 Porphyromonadaceae	28112 Tannerella forsythia	ref_mOTU_v2_3757	72.73	0	28.02	0.000438461538461539
+body_site	both	976 Bacteroidetes	171552 Prevotellaceae	165179 Prevotella copri	ref_mOTU_v2_4448	2.02	48.53	9.89	0.000438461538461539
+body_site	both	976 Bacteroidetes	171552 Prevotellaceae	282402 Prevotella multiformis	ref_mOTU_v2_5115	29.29	0	27.69	0.000438461538461539
+body_site	both	976 Bacteroidetes	171552 Prevotellaceae	386414 Prevotella timonensis	ref_mOTU_v2_0522	0	5.88	29.07	0.000438461538461539
+body_site	both	976 Bacteroidetes	171552 Prevotellaceae	589436 Prevotella fusca	ref_mOTU_v2_2727	32.32	0	13.29	0.000438461538461539
+body_site	both	1224 Proteobacteria	712 Pasteurellaceae	729 Haemophilus parainfluenzae	ref_mOTU_v2_0358	91.92	58.09	2.86	0.0007125
+body_site	both	1239 Firmicutes	1300 Streptococcaceae	1301 Streptococcus sp. [C infantis/mitis]	ref_mOTU_v2_0683	97.98	54.41	2.03	0.0007125
+body_site	both	1239 Firmicutes	1300 Streptococcaceae	1316408 Streptococcus sp. HSISM1	ref_mOTU_v2_0145	95.96	69.12	1.3	0.0007125
+body_site	both	1239 Firmicutes	31977 Veillonellaceae	29466 Veillonella parvula [C]	ref_mOTU_v2_1042	98.99	71.32	1.4	0.00100588235294118
+body_site	both	1239 Firmicutes	1300 Streptococcaceae	1318 Streptococcus parasanguinis	ref_mOTU_v2_0144	98.99	90.44	1.18	0.0019
+body_site	both	1239 Firmicutes	1300 Streptococcaceae	113107 Streptococcus australis	ref_mOTU_v2_1524	86.87	39.71	1.7	0.0021
+body_site	both	976 Bacteroidetes	815 Bacteroidaceae	338188 Bacteroides finegoldii	ref_mOTU_v2_1409	0	36.76	3.94	0.003135
+body_site	both	1239 Firmicutes	1300 Streptococcaceae	1301 Streptococcus sp. [C equinus/infantarius/lutetiensis]	ref_mOTU_v2_0261	20.2	14.71	4.34	0.00407142857142857
+body_site	both	1239 Firmicutes	1300 Streptococcaceae	1328 Streptococcus anginosus [C]	ref_mOTU_v2_0687	68.69	50.74	5.49	0.00414545454545455
+body_site	both	1239 Firmicutes	1300 Streptococcaceae	1313 Streptococcus pneumoniae	ref_mOTU_v2_0020	98.99	16.18	1.54	0.00892173913043478
+body_site	both	1239 Firmicutes	31977 Veillonellaceae	218538 Dialister invisus	ref_mOTU_v2_4598	77.78	51.47	2.37	0.009025
+body_site	both	201174 Actinobacteria	2049 Actinomycetaceae	706438 Actinomyces sp. oral taxon 171	ref_mOTU_v2_1445	80.81	2.94	1.92	0.011856
+body_site	both	1239 Firmicutes	1300 Streptococcaceae	469609 Streptococcus sp. 2_1_36FAA	ref_mOTU_v2_1399	88.89	47.06	2.1	0.0122769230769231
+body_site	both	201174 Actinobacteria	1268 Micrococcaceae	43675 Rothia mucilaginosa	ref_mOTU_v2_1438	100	52.21	1.78	0.0244888888888889
+body_site	both	1239 Firmicutes	1300 Streptococcaceae	1304 Streptococcus salivarius [C]	ref_mOTU_v2_0656	71.72	38.24	1.65	0.0396964285714286
+body_site	both	1239 Firmicutes	1300 Streptococcaceae	1302 Streptococcus gordonii	ref_mOTU_v2_1398	77.78	35.29	1.89	0.0493344827586207
+center	both	1224 Proteobacteria	712 Pasteurellaceae	712148 Aggregatibacter sp. oral taxon 458	ref_mOTU_v2_3038	65.66	2.94	3.26	0.004255
+center	saliva	1224 Proteobacteria	712 Pasteurellaceae	712148 Aggregatibacter sp. oral taxon 458	ref_mOTU_v2_3038	65.66	2.94	3.75	0.004255
+center	saliva	1224 Proteobacteria	712 Pasteurellaceae	732 Aggregatibacter aphrophilus	ref_mOTU_v2_1461	57.58	4.41	14.67	0.004255
+center	both	1224 Proteobacteria	712 Pasteurellaceae	739 Aggregatibacter segnis	ref_mOTU_v2_5107	64.65	5.15	8.4	0.004255
+center	both	1239 Firmicutes	186806 Eubacteriaceae	39488 [Eubacterium] hallii	ref_mOTU_v2_4207	0	85.29	5.68	0.004255
+center	feces	1239 Firmicutes	186806 Eubacteriaceae	39488 [Eubacterium] hallii	ref_mOTU_v2_4207	0	85.29	6.07	0.004255
+center	feces	1239 Firmicutes	909930 Acidaminococcaceae	187327 Acidaminococcus intestini [C]	ref_mOTU_v2_0391	1.01	23.53	9.39	0.004255
+center	both	1239 Firmicutes	1300 Streptococcaceae	1095727 Streptococcus sp. SK643	ref_mOTU_v2_1747	82.83	2.21	2.33	0.004255
+center	saliva	1239 Firmicutes	1300 Streptococcaceae	1095727 Streptococcus sp. SK643	ref_mOTU_v2_1747	82.83	2.21	2.37	0.004255
+center	saliva	1239 Firmicutes	1300 Streptococcaceae	28037 Streptococcus mitis	ref_mOTU_v2_0022	98.99	30.88	2.05	0.004255
+center	both	1239 Firmicutes	1300 Streptococcaceae	28037 Streptococcus mitis	ref_mOTU_v2_0024	96.97	15.44	1.83	0.004255
+center	saliva	1239 Firmicutes	1300 Streptococcaceae	28037 Streptococcus mitis	ref_mOTU_v2_0024	96.97	15.44	1.97	0.004255
+center	saliva	1239 Firmicutes	1300 Streptococcaceae	28037 Streptococcus mitis	ref_mOTU_v2_0025	88.89	2.94	2.11	0.004255
+center	both	201174 Actinobacteria	2049 Actinomycetaceae	1660 Actinomyces odontolyticus [C]	ref_mOTU_v2_0375	98.99	53.68	5.25	0.004255
+center	saliva	201174 Actinobacteria	2049 Actinomycetaceae	1660 Actinomyces odontolyticus [C]	ref_mOTU_v2_0375	98.99	53.68	5.2	0.004255
+center	both	201174 Actinobacteria	2049 Actinomycetaceae	712124 Actinomyces sp. oral taxon 448	ref_mOTU_v2_5106	53.54	12.5	8.73	0.004255
+center	both	201174 Actinobacteria	1268 Micrococcaceae	32207 Rothia sp. [C aeria/dentocariosa]	ref_mOTU_v2_0551	88.89	2.94	2.58	0.004255
+center	saliva	976 Bacteroidetes	49546 Flavobacteriaceae	706435 Capnocytophaga sp. oral taxon 329	ref_mOTU_v2_4841	79.8	0	2.46	0.004255
+center	both	976 Bacteroidetes	171552 Prevotellaceae	76122 Alloprevotella tannerae	ref_mOTU_v2_4636	94.95	4.41	3.6	0.004255
+center	saliva	976 Bacteroidetes	171552 Prevotellaceae	228603 Prevotella shahii	ref_mOTU_v2_2104	32.32	0.74	2.89	0.004255
+center	saliva	1224 Proteobacteria	712 Pasteurellaceae	739 Aggregatibacter segnis	ref_mOTU_v2_5107	64.65	5.15	9.01	0.00709166666666667
+center	both	1239 Firmicutes	1300 Streptococcaceae	28037 Streptococcus mitis	ref_mOTU_v2_0022	98.99	30.88	1.84	0.00709166666666667
+center	both	976 Bacteroidetes	49546 Flavobacteriaceae	706435 Capnocytophaga sp. oral taxon 329	ref_mOTU_v2_4841	79.8	0	2.46	0.00709166666666667
+center	both	976 Bacteroidetes	171552 Prevotellaceae	652721 Prevotella sp. oral taxon 317	ref_mOTU_v2_4554	72.73	0	2.79	0.00709166666666667
+center	both	1239 Firmicutes	541000 Ruminococcaceae	853 Faecalibacterium prausnitzii	ref_mOTU_v2_4910	15.15	85.29	2.19	0.00880344827586207
+center	both	1239 Firmicutes	909930 Acidaminococcaceae	187327 Acidaminococcus intestini [C]	ref_mOTU_v2_0391	1.01	23.53	9.39	0.00880344827586207
+center	saliva	1239 Firmicutes	1300 Streptococcaceae	28037 Streptococcus mitis	ref_mOTU_v2_0033	90.91	8.82	2.02	0.00880344827586207
+center	both	1239 Firmicutes	186828 Carnobacteriaceae	46124 Granulicatella adiacens	ref_mOTU_v2_4659	97.98	44.12	2.58	0.00880344827586207
+center	saliva	976 Bacteroidetes	171552 Prevotellaceae	652721 Prevotella sp. oral taxon 317	ref_mOTU_v2_4554	72.73	0	2.88	0.00880344827586207
+center	both	1239 Firmicutes	31977 Veillonellaceae	29466 Veillonella parvula [C]	ref_mOTU_v2_1042	98.99	71.32	1.36	0.0109806451612903
+center	both	976 Bacteroidetes	171552 Prevotellaceae	228603 Prevotella shahii	ref_mOTU_v2_2104	32.32	0.74	2.57	0.0109806451612903
+center	both	1239 Firmicutes	1300 Streptococcaceae	28037 Streptococcus mitis	ref_mOTU_v2_0025	88.89	2.94	1.86	0.0125147058823529
+center	saliva	1239 Firmicutes	1300 Streptococcaceae	28037 Streptococcus mitis	ref_mOTU_v2_0028	98.99	16.91	1.81	0.0125147058823529
+center	saliva	1239 Firmicutes	1300 Streptococcaceae	28037 Streptococcus mitis	ref_mOTU_v2_0030	97.98	27.94	1.82	0.0125147058823529
+center	both	1239 Firmicutes	1300 Streptococcaceae	28037 Streptococcus mitis	ref_mOTU_v2_0029	90.91	11.76	1.66	0.0138
+center	saliva	1239 Firmicutes	1300 Streptococcaceae	28037 Streptococcus mitis	ref_mOTU_v2_0031	100	58.09	1.82	0.0138
+center	both	32066 Fusobacteria	203492 Fusobacteriaceae	851 Fusobacterium nucleatum subsp. polymorphum [C]	ref_mOTU_v2_0131	82.83	14.71	3.36	0.0138
+center	feces	1239 Firmicutes	541000 Ruminococcaceae	853 Faecalibacterium prausnitzii	ref_mOTU_v2_4910	15.15	85.29	2.23	0.015274358974359
+center	both	1239 Firmicutes	1300 Streptococcaceae	1301 Streptococcus sp. [C infantis/mitis]	ref_mOTU_v2_0683	97.98	54.41	1.74	0.015274358974359
+center	both	32066 Fusobacteria	203492 Fusobacteriaceae	1583098 Fusobacterium hwasookii	ref_mOTU_v2_0130	53.54	6.62	7.25	0.0191475
+center	both	1239 Firmicutes	1300 Streptococcaceae	28037 Streptococcus mitis	ref_mOTU_v2_0033	90.91	8.82	1.73	0.0197906976744186
+center	saliva	976 Bacteroidetes	171552 Prevotellaceae	76122 Alloprevotella tannerae	ref_mOTU_v2_4636	94.95	4.41	3.59	0.0197906976744186
+center	both	976 Bacteroidetes	171552 Prevotellaceae	470565 Prevotella histicola	ref_mOTU_v2_0907	90.91	5.15	2.87	0.0197906976744186
+center	saliva	201174 Actinobacteria	2049 Actinomycetaceae	712124 Actinomyces sp. oral taxon 448	ref_mOTU_v2_5106	53.54	12.5	9.34	0.0208022222222222
+center	saliva	976 Bacteroidetes	171552 Prevotellaceae	470565 Prevotella histicola	ref_mOTU_v2_0907	90.91	5.15	2.97	0.0208022222222222
+center	both	1224 Proteobacteria	481 Neisseriaceae	505 Kingella oralis	ref_mOTU_v2_4641	69.7	0	3.36	0.021275
+center	both	1239 Firmicutes	186803 Lachnospiraceae	658655 Lachnospiraceae bacterium 1_4_56FAA	ref_mOTU_v2_4723	0	38.97	1.97	0.021275
+center	saliva	1239 Firmicutes	1300 Streptococcaceae	28037 Streptococcus mitis	ref_mOTU_v2_0029	90.91	11.76	1.76	0.021275
+center	saliva	1239 Firmicutes	1300 Streptococcaceae	1095726 Streptococcus sp. SK140	ref_mOTU_v2_1746	94.95	22.79	2.05	0.0233607843137255
+center	both	1239 Firmicutes	1300 Streptococcaceae	28037 Streptococcus mitis	ref_mOTU_v2_0028	98.99	16.91	1.62	0.0233607843137255
+center	both	1239 Firmicutes	1300 Streptococcaceae	28037 Streptococcus mitis	ref_mOTU_v2_0031	100	58.09	1.51	0.0233607843137255
+center	both	1239 Firmicutes	1300 Streptococcaceae	28037 Streptococcus mitis	ref_mOTU_v2_0030	97.98	27.94	1.62	0.0236388888888889
+center	both	1239 Firmicutes	1300 Streptococcaceae	68892 Streptococcus infantis	ref_mOTU_v2_5047	91.92	21.32	1.8	0.0236388888888889
+center	both	201174 Actinobacteria	1653 Corynebacteriaceae	61592 Corynebacterium durum	ref_mOTU_v2_1615	65.66	11.76	4.95	0.0236388888888889
+center	both	1239 Firmicutes	31977 Veillonellaceae	39778 Veillonella dispar	ref_mOTU_v2_4469	95.96	50	1.73	0.0247563636363636
+center	saliva	1224 Proteobacteria	481 Neisseriaceae	505 Kingella oralis	ref_mOTU_v2_4641	69.7	0	3.36	0.025380701754386
+center	saliva	1239 Firmicutes	186828 Carnobacteriaceae	46124 Granulicatella adiacens	ref_mOTU_v2_4659	97.98	44.12	2.85	0.025380701754386
+center	both	1239 Firmicutes	1300 Streptococcaceae	45634 Streptococcus cristatus	ref_mOTU_v2_1525	76.77	15.44	2.76	0.0274050847457627
+center	both	201174 Actinobacteria	2049 Actinomycetaceae	1203556 Actinomyces sp. HPA0247	ref_mOTU_v2_2506	95.96	27.94	3.55	0.0274050847457627
+center	both	1239 Firmicutes	1300 Streptococcaceae	1095726 Streptococcus sp. SK140	ref_mOTU_v2_1746	94.95	22.79	1.74	0.029785
+center	feces	1239 Firmicutes	186803 Lachnospiraceae	658655 Lachnospiraceae bacterium 1_4_56FAA	ref_mOTU_v2_4723	0	38.97	1.9	0.0306918032786885
+center	both	1224 Proteobacteria	712 Pasteurellaceae	732 Aggregatibacter aphrophilus	ref_mOTU_v2_1461	57.58	4.41	10.32	0.0315693548387097
+center	saliva	976 Bacteroidetes	171552 Prevotellaceae	282402 Prevotella multiformis	ref_mOTU_v2_5115	29.29	0	2.61	0.0324190476190476
+center	both	1239 Firmicutes	541000 Ruminococcaceae	169435 Anaerotruncus colihominis	ref_mOTU_v2_0884	0	57.35	1.63	0.0359015625
+center	both	976 Bacteroidetes	171550 Rikenellaceae	1288121 Alistipes senegalensis	ref_mOTU_v2_1594	1.01	41.91	2.92	0.0379676923076923
+center	both	1239 Firmicutes	1300 Streptococcaceae	1301 Streptococcus sp. [C equinus/infantarius/lutetiensis]	ref_mOTU_v2_0261	20.2	14.71	3.84	0.0412606060606061
+center	both	201174 Actinobacteria	2049 Actinomycetaceae	1105029 Actinomyces sp. ICM39	ref_mOTU_v2_0376	95.96	40.44	2.25	0.0412985294117647
+center	both	976 Bacteroidetes	171550 Rikenellaceae	328813 Alistipes onderdonkii [C]	ref_mOTU_v2_0775	28.28	82.35	4.93	0.0412985294117647
+center	both	1239 Firmicutes	1300 Streptococcaceae	1203590 Streptococcus sp. HPH0090	ref_mOTU_v2_2507	94.95	27.21	2.34	0.0437
+center	both	1239 Firmicutes	1300 Streptococcaceae	1316408 Streptococcus sp. HSISM1	ref_mOTU_v2_0145	95.96	69.12	1	0.0437
+center	both	1239 Firmicutes	1300 Streptococcaceae	999425 Streptococcus sp. F0442	ref_mOTU_v2_5298	84.85	38.24	1.21	0.0437
+center	saliva	201174 Actinobacteria	2049 Actinomycetaceae	55565 Actinomyces graevenitzii	ref_mOTU_v2_1056	89.9	18.38	2.89	0.0437
+center	saliva	32066 Fusobacteria	203492 Fusobacteriaceae	851 Fusobacterium nucleatum subsp. vincentii [C]	ref_mOTU_v2_0754	84.85	6.62	6.5	0.0437
+center	both	976 Bacteroidetes	171552 Prevotellaceae	28134 Prevotella oralis	ref_mOTU_v2_0277	44.44	3.68	23.2	0.0437
+center	both	201174 Actinobacteria	31953 Bifidobacteriaceae	78258 Parascardovia denticolens	ref_mOTU_v2_0747	33.33	4.41	4.64	0.0442077922077922
+center	saliva	32066 Fusobacteria	203492 Fusobacteriaceae	851 Fusobacterium nucleatum subsp. polymorphum [C]	ref_mOTU_v2_0131	82.83	14.71	3.88	0.0442077922077922
+center	saliva	976 Bacteroidetes	171552 Prevotellaceae	28127 Prevotella buccalis [C]	ref_mOTU_v2_0394	0	2.21	3.4	0.0442077922077922
+center	both	201174 Actinobacteria	2049 Actinomycetaceae	55565 Actinomyces graevenitzii	ref_mOTU_v2_1056	89.9	18.38	2.35	0.0452430379746835
+center	saliva	976 Bacteroidetes	171552 Prevotellaceae	28126 Prevotella buccae [C]	ref_mOTU_v2_0132	67.68	9.56	2.97	0.0452430379746835
+center	saliva	976 Bacteroidetes	171552 Prevotellaceae	454154 Paraprevotella clara	ref_mOTU_v2_4942	3.03	54.41	3.42	0.04786875
+center	feces	976 Bacteroidetes	171550 Rikenellaceae	1288121 Alistipes senegalensis	ref_mOTU_v2_1594	1.01	41.91	2.88	0.049379012345679
+sex	both	1239 Firmicutes	186803 Lachnospiraceae	39491 [Eubacterium] rectale	ref_mOTU_v2_1416	22.22	90.44	2.16	0.0141833333333333
+sex	both	1239 Firmicutes	1300 Streptococcaceae	113107 Streptococcus australis	ref_mOTU_v2_1524	86.87	39.71	2.2	0.0141833333333333
+sex	both	1239 Firmicutes	1300 Streptococcaceae	1328 Streptococcus anginosus	ref_mOTU_v2_0004	70.71	41.91	13.25	0.0141833333333333
+sex	both	1239 Firmicutes	1300 Streptococcaceae	1328 Streptococcus anginosus	ref_mOTU_v2_0005	30.3	25.74	14.43	0.0141833333333333
+sex	feces	1239 Firmicutes	1300 Streptococcaceae	1328 Streptococcus anginosus	ref_mOTU_v2_0005	30.3	25.74	19.51	0.0141833333333333
+sex	both	1239 Firmicutes	1300 Streptococcaceae	1328 Streptococcus anginosus	ref_mOTU_v2_0351	28.28	16.91	17.11	0.0141833333333333
+smoker	saliva	1224 Proteobacteria	481 Neisseriaceae	267212 Neisseria bacilliformis	ref_mOTU_v2_5114	41.41	0	8.56	0.00607857142857143
+smoker	both	1239 Firmicutes	31977 Veillonellaceae	39778 Veillonella dispar	ref_mOTU_v2_4469	95.96	50	2.14	0.00607857142857143
+smoker	both	1239 Firmicutes	1300 Streptococcaceae	1303 Streptococcus oralis	ref_mOTU_v2_0354	87.88	14.71	2.65	0.00607857142857143
+smoker	both	1239 Firmicutes	1300 Streptococcaceae	1303 Streptococcus oralis [C]	ref_mOTU_v2_0146	96.97	34.56	2.51	0.00607857142857143
+smoker	both	1239 Firmicutes	1300 Streptococcaceae	1316408 Streptococcus sp. HSISM1	ref_mOTU_v2_0145	95.96	69.12	1.39	0.00607857142857143
+smoker	both	1239 Firmicutes	1300 Streptococcaceae	1318 Streptococcus parasanguinis	ref_mOTU_v2_0144	98.99	90.44	1.42	0.00607857142857143
+smoker	both	1239 Firmicutes	1300 Streptococcaceae	999425 Streptococcus sp. F0442	ref_mOTU_v2_5298	84.85	38.24	1.6	0.00607857142857143
+smoker	both	201174 Actinobacteria	2049 Actinomycetaceae	1654 Actinomyces sp. [C oral taxon 181/ph3]	ref_mOTU_v2_0430	93.94	34.56	2.38	0.00607857142857143
+smoker	both	201174 Actinobacteria	31953 Bifidobacteriaceae	419015 Alloscardovia omnicolens	ref_mOTU_v2_0446	52.53	19.85	4.65	0.00607857142857143
+smoker	both	201174 Actinobacteria	1268 Micrococcaceae	2047 Rothia dentocariosa	ref_mOTU_v2_1446	95.96	21.32	4.28	0.00607857142857143
+smoker	saliva	201174 Actinobacteria	1268 Micrococcaceae	2047 Rothia dentocariosa	ref_mOTU_v2_1446	95.96	21.32	4.84	0.00607857142857143
+smoker	both	201174 Actinobacteria	1268 Micrococcaceae	32207 Rothia sp. [C aeria/dentocariosa]	ref_mOTU_v2_0551	88.89	2.94	3.36	0.00607857142857143
+smoker	saliva	201174 Actinobacteria	1268 Micrococcaceae	32207 Rothia sp. [C aeria/dentocariosa]	ref_mOTU_v2_0551	88.89	2.94	3.41	0.00607857142857143
+smoker	both	201174 Actinobacteria	1653 Corynebacteriaceae	61592 Corynebacterium durum	ref_mOTU_v2_1615	65.66	11.76	7.65	0.00607857142857143
+smoker	both	1224 Proteobacteria	481 Neisseriaceae	267212 Neisseria bacilliformis	ref_mOTU_v2_5114	41.41	0	8.56	0.0100117647058824
+smoker	saliva	1239 Firmicutes	1300 Streptococcaceae	1303 Streptococcus oralis	ref_mOTU_v2_0355	90.91	17.65	3	0.0100117647058824
+smoker	both	201174 Actinobacteria	2049 Actinomycetaceae	1656 Actinomyces viscosus [C]	ref_mOTU_v2_1444	97.98	39.71	2.61	0.0100117647058824
+smoker	both	1224 Proteobacteria	481 Neisseriaceae	28449 Neisseria subflava	ref_mOTU_v2_4466	87.88	7.35	4.17	0.0134368421052632
+smoker	saliva	201174 Actinobacteria	1653 Corynebacteriaceae	61592 Corynebacterium durum	ref_mOTU_v2_1615	65.66	11.76	8.26	0.0134368421052632
+smoker	both	1239 Firmicutes	1300 Streptococcaceae	1303 Streptococcus oralis	ref_mOTU_v2_0355	90.91	17.65	2.83	0.0162095238095238
+smoker	both	1239 Firmicutes	1300 Streptococcaceae	1303 Streptococcus oralis	ref_mOTU_v2_0357	85.86	14.71	2.59	0.0162095238095238
+smoker	both	1239 Firmicutes	31977 Veillonellaceae	671228 Veillonella sp. oral taxon 158	ref_mOTU_v2_5068	94.95	41.91	2.33	0.0185
+smoker	saliva	1239 Firmicutes	1300 Streptococcaceae	1303 Streptococcus oralis	ref_mOTU_v2_0357	85.86	14.71	2.65	0.0185
+smoker	both	1239 Firmicutes	1300 Streptococcaceae	28037 Streptococcus mitis	ref_mOTU_v2_5026	79.8	9.56	2.51	0.0196384615384615
+smoker	both	201174 Actinobacteria	2049 Actinomycetaceae	544581 Actinomyces johnsonii [C]	ref_mOTU_v2_1057	60.61	5.15	3.9	0.0196384615384615
+smoker	saliva	201174 Actinobacteria	2049 Actinomycetaceae	544581 Actinomyces johnsonii [C]	ref_mOTU_v2_1057	60.61	5.15	4.14	0.0196384615384615
+smoker	saliva	1239 Firmicutes	31977 Veillonellaceae	671228 Veillonella sp. oral taxon 158	ref_mOTU_v2_5068	94.95	41.91	3.16	0.021275
+smoker	saliva	1239 Firmicutes	1300 Streptococcaceae	28037 Streptococcus mitis	ref_mOTU_v2_5026	79.8	9.56	2.8	0.021275
+smoker	both	1239 Firmicutes	1300 Streptococcaceae	1301 Streptococcus sp. [C infantis/mitis]	ref_mOTU_v2_0683	97.98	54.41	1.64	0.0243142857142857
+smoker	saliva	1239 Firmicutes	1300 Streptococcaceae	1303 Streptococcus oralis	ref_mOTU_v2_0354	87.88	14.71	2.53	0.0243142857142857
+smoker	saliva	1239 Firmicutes	1300 Streptococcaceae	1303 Streptococcus oralis [C]	ref_mOTU_v2_0146	96.97	34.56	2.64	0.0243142857142857
+smoker	both	1239 Firmicutes	1300 Streptococcaceae	1303 Streptococcus oralis [C]	ref_mOTU_v2_0353	87.88	14.71	2.4	0.0243142857142857
+smoker	saliva	1239 Firmicutes	1300 Streptococcaceae	1303 Streptococcus oralis [C]	ref_mOTU_v2_0353	87.88	14.71	2.85	0.0243142857142857
+smoker	both	1239 Firmicutes	1300 Streptococcaceae	1303 Streptococcus oralis [C]	ref_mOTU_v2_0356	100	56.62	2.25	0.0243142857142857
+smoker	saliva	201174 Actinobacteria	2049 Actinomycetaceae	1654 Actinomyces sp. [C oral taxon 181/ph3]	ref_mOTU_v2_0430	93.94	34.56	2.46	0.0243142857142857
+smoker	feces	1239 Firmicutes	909930 Acidaminococcaceae	187327 Acidaminococcus intestini [C]	ref_mOTU_v2_0391	1.01	23.53	11.09	0.0253
+smoker	both	1239 Firmicutes	1300 Streptococcaceae	1303 Streptococcus oralis	ref_mOTU_v2_0984	91.92	26.47	2.49	0.0253
+smoker	both	1239 Firmicutes	909930 Acidaminococcaceae	187327 Acidaminococcus intestini [C]	ref_mOTU_v2_0391	1.01	23.53	11.09	0.0291131578947368
+smoker	saliva	201174 Actinobacteria	2049 Actinomycetaceae	1656 Actinomyces viscosus [C]	ref_mOTU_v2_1444	97.98	39.71	3.14	0.030548717948718
+smoker	both	1239 Firmicutes	1300 Streptococcaceae	1301 Streptococcus sp. [C I-G2/I-P16]	ref_mOTU_v2_0650	93.94	47.06	3.83	0.0373609756097561
+smoker	both	976 Bacteroidetes	49546 Flavobacteriaceae	1227265 Capnocytophaga sp. oral taxon 863	ref_mOTU_v2_2619	11.11	0	4.01	0.0373609756097561
+smoker	both	1239 Firmicutes	31977 Veillonellaceae	29466 Veillonella parvula [C]	ref_mOTU_v2_1042	98.99	71.32	1.18	0.0376023255813954
+smoker	saliva	976 Bacteroidetes	49546 Flavobacteriaceae	1227265 Capnocytophaga sp. oral taxon 863	ref_mOTU_v2_2619	11.11	0	4.01	0.0376023255813954
+smoker	both	201174 Actinobacteria	31953 Bifidobacteriaceae	78258 Parascardovia denticolens	ref_mOTU_v2_0747	33.33	4.41	5.75	0.0444840909090909
+smoker	both	1239 Firmicutes	128827 Erysipelotrichaceae	39483 Faecalitalea cylindroides	ref_mOTU_v2_1470	0	11.76	1.73	0.0491688888888889
+status	both	1239 Firmicutes	186806 Eubacteriaceae	39484 Eubacterium desmolans	ref_mOTU_v2_3307	0	3.68	4.16	0.0141833333333333
+status	feces	1239 Firmicutes	186806 Eubacteriaceae	39484 Eubacterium desmolans	ref_mOTU_v2_3307	0	3.68	4.18	0.0141833333333333
+status	feces	1239 Firmicutes	NA Clostridiales fam. incertae sedis	384638 [Bacteroides] pectinophilus	ref_mOTU_v2_4341	0	10.29	3.58	0.0141833333333333
+status	feces	1239 Firmicutes	128827 Erysipelotrichaceae	100883 Coprobacillus sp. [C 29_1/D6]	ref_mOTU_v2_1401	1.01	30.88	3.36	0.0141833333333333
+status	both	1239 Firmicutes	909930 Acidaminococcaceae	187327 Acidaminococcus intestini [C]	ref_mOTU_v2_0391	1.01	23.53	27.12	0.0141833333333333
+status	feces	1239 Firmicutes	909930 Acidaminococcaceae	187327 Acidaminococcus intestini [C]	ref_mOTU_v2_0391	1.01	23.53	27.12	0.0141833333333333
+status	both	1239 Firmicutes	NA Clostridiales fam. incertae sedis	384638 [Bacteroides] pectinophilus	ref_mOTU_v2_4341	0	10.29	3.4	0.021275
+status	both	1239 Firmicutes	1300 Streptococcaceae	999425 Streptococcus sp. F0442	ref_mOTU_v2_5298	84.85	38.24	2.34	0.021275
+status	both	201174 Actinobacteria	31953 Bifidobacteriaceae	419015 Alloscardovia omnicolens	ref_mOTU_v2_0446	52.53	19.85	6.77	0.0283666666666667
+status	both	1239 Firmicutes	186803 Lachnospiraceae	1512 [Clostridium] symbiosum [C]	ref_mOTU_v2_1475	0	53.68	3.26	0.0386818181818182
+status	feces	1239 Firmicutes	186803 Lachnospiraceae	84030 [Clostridium] saccharolyticum [C]	ref_mOTU_v2_1380	0	16.91	2.97	0.0386818181818182
+status	both	1239 Firmicutes	186803 Lachnospiraceae	84030 [Clostridium] saccharolyticum [C]	ref_mOTU_v2_1380	0	16.91	2.82	0.0453866666666667
+status	both	1239 Firmicutes	186803 Lachnospiraceae	742723 Lachnospiraceae bacterium 2_1_46FAA	ref_mOTU_v2_4878	0	1.47	3.34	0.0453866666666667
+status	both	1239 Firmicutes	128827 Erysipelotrichaceae	31971 [Eubacterium] dolichum	ref_mOTU_v2_4236	0	6.62	2.93	0.0453866666666667
+status	both	1239 Firmicutes	1300 Streptococcaceae	1316408 Streptococcus sp. HSISM1	ref_mOTU_v2_0145	95.96	69.12	1.91	0.0453866666666667

@@ -1,0 +1,337 @@
+---
+title: "External Validation of PDAC Models"
+output: html_document
+---
+
+This document contains the validation of the pancreatic cancer models on external
+cohorts. Specificities > 0.90 is the cutoff for pdac models.
+Criteria used to select external cohorts:
+* fecal samples
+* different timepoints are excluded and only first timepoint is used 
+* > 20 samples in each group
+
+```{r set parameters, message=FALSE, warning=FALSE}
+# load library 
+library(readxl)
+library(tidyverse)
+library(ggplot2)
+library(pROC)
+library(ggpubr)
+library(SIAMCAT)
+
+# set parameters
+PARAM <- list()
+PARAM$folder.R <- paste0(getwd(), "/")
+PARAM$folder <- gsub("Rmd/", "", PARAM$folder.R)
+PARAM$folder.extmeta <- paste0(PARAM$folder, "metadata/")
+PARAM$folder.Rdata <- paste0(PARAM$folder, "Rdata/")
+PARAM$folder.data <- paste0(PARAM$folder, "data/external/")
+PARAM$folder.results <- paste0(PARAM$folder, "results/metag/")
+# load data
+load(paste0(PARAM$folder.Rdata,"metag.external.validation.Rdata"))
+```
+
+###############################################################################
+Calculate FPR of Metag Models on 25 External Study Cohorts
+###############################################################################
+```{r}
+# assign all datasets for testing
+datasets.l = list(
+  "Price Lloyd 2016"     = list(studyDataframe = "HMP2_IBD_mg3.tsv", 
+                                metaTable = "Price_Lloyd_IBDMDB.tsv",
+                                expTable = "Price_Lloyd_experiment.tsv"),
+  "Buschart 2016"        = list(studyDataframe = "Buschart_2016_T1D.mg3.tsv", 
+                                metaTable = "Buschart_2016_sample.tsv",
+                                expTable = "Buschart_2016_experiment.tsv"),
+  "Dhakan 2019"          = list(studyDataframe = "Dhakan_2019.mg3.tsv", 
+                                metaTable = "Dhakan_2019_sample.tsv",
+                                expTable = "Dhakan_2019_experiment.tsv"),
+  "Feng 2015"            = list(studyDataframe = "Feng_2015_CRC_mg3.tsv", 
+                                metaTable = "Feng_2014_sample.tsv",
+                                expTable = "Feng_2014_experiment.tsv"),
+  "Brito 2016"           = list(studyDataframe = "FijiCOMP_mg3.tsv", 
+                                metaTable = "FijiComp_sample.tsv",
+                                expTable = "FijiComp_experiment.tsv"),
+  "FMT Vaughn"           = list(studyDataframe = "FMT_Vaughn.mg3.tsv", 
+                                metaTable = "FMT_Vaughn_sample.tsv",
+                                expTable = "FMT_Vaughn_experiment.tsv"),
+  "Franzosa 2018"        = list(studyDataframe = "Franzosa_2018_mg3.tsv", 
+                                metaTable = "Franzosa_2018_sample.tsv",
+                                expTable = "Franzosa_2018_experiment.tsv"),
+  "He 2017"              = list(studyDataframe = "He_2017_crohn_mg3.tsv", 
+                                metaTable = "He_2017_sample.tsv",
+                                expTable = "He_2017_experiment.tsv"),
+  "Hoyles 2018"          = list(studyDataframe = "Hoyles.2018.mg3.tsv", 
+                                metaTable = "Hoyles_2018_sample.tsv",
+                                expTable = "Hoyles_2018_experiment.tsv"),
+  "Jie 2017"             = list(studyDataframe = "Jie_2017.mg3.tsv", 
+                                metaTable = "Jie_2017_sample.tsv",
+                                expTable = "Jie_2017_experiment.tsv"),
+  "Karlsson 2013"        = list(studyDataframe = "Karlsson.2013.T2D_mg3.tsv", 
+                                metaTable = "Karlsson_2013_sample.tsv",
+                                expTable = "Karlsson_2013_experiment.tsv"),
+  "Kuang 2019"           = list(studyDataframe = "Kuang_2019_diabetes.mg3.tsv", 
+                                metaTable = "Kuang_2019_sample.tsv",
+                                expTable = "Kuang_2019_experiment.tsv"),
+  "Liu 2016"             = list(studyDataframe = "Liu_2016_mg3.tsv", 
+                                metaTable = "Liu_2016_sample.tsv",
+                                expTable = "Liu_2016_experiment.tsv"),
+  "Forslund 2015"        = list(studyDataframe = "Metahit_mg3.tsv", 
+                                metaTable = "Forslund_2015_sample.tsv",
+                                expTable = "Forslund_2015_experiment.tsv"),
+   "Qin 2012"            = list(studyDataframe = "Qin_2012_mg3.tsv", 
+                                metaTable = "Qin_2012_sample.tsv",
+                                expTable = "Qin_2012_experiment.tsv"),
+  "Sankaranarayanan 2015"= list(studyDataframe = "Sankaranarayanan_2015_nativeA.mg3.tsv", 
+                                metaTable = "Sankaranarayanan_2015_sample.tsv",
+                                expTable = "Sankaranarayanan_2015_experiment.tsv"),
+  "Schirmer 2016"        = list(studyDataframe = "Schirmer_2016_500FG.mg3.tsv", 
+                                metaTable = "Schirmer_2016_sample.tsv",
+                                expTable = "Schirmer_2016_experiment.tsv"),
+  "Vogtmann 2016"        = list(studyDataframe = "Vogtmann_2016_CRC_mg3.tsv", 
+                                metaTable = "Vogtmann_2016_sample.tsv",
+                                expTable = "Vogtmann_2016_experiment.tsv"),
+  "Wirbel 2019"          = list(studyDataframe = "Wirbel_2019_CRC.mg3.tsv", 
+                                metaTable = "Wirbel_2019_sample.tsv",
+                                expTable = "Wirbel_2019_experiment.tsv"),
+  "Yachida 2019"         = list(studyDataframe = "Yachida_2019_CRC.mg3.tsv", 
+                                metaTable = "Yachida_2019_sample.tsv",
+                                expTable = "Yachida_2019_experiment.tsv"),
+  "Yu 2017"              = list(studyDataframe = "Yu_CRC_mg3.tsv", 
+                                metaTable = "Yu_2017_sample.tsv",
+                                expTable = "Yu_2017_CRC_experiment.tsv"),
+  "Zeevi 2015"           = list(studyDataframe = "Zeevi.2015.mg3.tsv", 
+                                metaTable = "Zeevi_2015_sample.tsv",
+                                expTable = "Zeevi_2015_experiment.tsv"),
+  "Zeller 2014"          = list(studyDataframe = "Zeller_2014_CRC.mg3.tsv", 
+                                metaTable = "Zeller_2014_sample.tsv",
+                                expTable = "Zeller_2014_experiment.tsv"),
+  "Zhu 2018"             = list(studyDataframe = "Zhu_2018_breastcancer.mg3.tsv", 
+                                metaTable = "Zhu_2018_sample.tsv",
+                                expTable = "Zhu_2018_experiment.tsv"),
+  "Xie 2016"             = list(studyDataframe = "Xie_2016_mg3.tsv", 
+                                metaTable = "Xie_2016_sample.tsv",
+                                expTable = "Xie_2016_experiment.tsv"),
+  "Spanish"              = list(studyDataframe = "motu.abs.3mg", 
+                                metaTable = "meta.total",
+                                expTable = "Spanish_experiment.tsv"))
+
+for (datasetCur in names(datasets.l)) {
+  
+  envName = datasets.l[[datasetCur]]$metaTable
+  uniqueStatuses = unique(eval(parse(text = envName))$subject_disease_status)
+  datasets.l[[datasetCur]]$status = uniqueStatuses
+}
+# create an empty tibble
+masterTable = tribble(~filename, ~status, ~studyDataframe, ~metaTable, ~expTable, ~models)
+models = c("model1" = model1, "model2" = model2)
+
+for (datasetCur in names(datasets.l)) {
+  
+  for (statusCur in datasets.l[[datasetCur]]$status) {
+    for (modelCur in names(models)) {
+    
+     masterTable = add_row(masterTable,
+                        filename = datasetCur,                        
+                        status = statusCur,
+                        studyDataframe = datasets.l[[datasetCur]]$studyDataframe,
+                        metaTable = datasets.l[[datasetCur]]$metaTable,
+                        expTable = datasets.l[[datasetCur]]$expTable,
+                        models = modelCur) 
+    }
+  }
+}
+```
+
+```{r}
+# load the holdout function
+source(paste0(PARAM$folder,"Rmd/holdout.test.R"))
+# assign siamcat object to test
+# it creates a table with all possible iterations and apply holdoutTest function 
+resultsFinal.l = list()
+  for (rowCur in 1:nrow(masterTable)) {
+  resultsFinal.l[[as.character(rowCur)]] =
+    holdoutTest(studyDataframe = eval(parse(text =masterTable$studyDataframe[rowCur])),
+                filename = masterTable$filename[rowCur],
+                metaTable = eval(parse(text = masterTable$metaTable[rowCur])),
+                expTable = eval(parse(text =masterTable$expTable[rowCur])),
+                status = masterTable$status[rowCur],
+                models=eval(parse(text = masterTable$models[rowCur])),
+                modelname=masterTable$models[rowCur]) %>%
+    dplyr::mutate(filename=masterTable$filename[rowCur],
+                  status = masterTable$status[rowCur],
+                  nameStatus = paste0(filename, "_", status),
+                  modelname=masterTable$models[rowCur]) %>%
+    dplyr::select(filename, status, modelname, nameStatus, everything(), -Group)
+  }
+
+# Convert list to data frame
+resultsFinal.df = data.table::rbindlist(resultsFinal.l)
+resultsFinal.df$filename <- resultsFinal.df$nameStatus
+results.v <- resultsFinal.df %>%
+  dplyr::group_by(status, modelname) %>%
+  dplyr::summarise(modelname=modelname, 
+                   n = sum(n), 
+                   pred.pos=sum(pred.pos),
+                   pred.neg = sum(pred.neg),
+                   fpr = pred.pos/n, 
+                   nameStatus=paste0("average ", unique(status))) 
+
+  ext.val.fpr=unique(rbind(results.v, dplyr::select(resultsFinal.df, colnames(results.v))))
+
+# save results
+write.table(ext.val.fpr, paste0(PARAM$folder.results, Sys.Date(), ".ext.val.0.90.spec.tsv"), row.names=TRUE, sep="\t")
+```
+
+
+```{r plotting}
+# plot the external validation fpr scores
+mypalette=c("#d688c1","#a8b245","#1b90fb","#678743","#d89b37","#737782",
+"#cd5d40","#48b6a5","#d1416d","#54afd0","#d68337","#7f69ae")
+
+# barplot
+p.bar <- ggplot(data=ext.val.fpr, 
+                aes(x=nameStatus, y=fpr, fill=status)) + 
+  geom_col(alpha=0.8)+ 
+  scale_fill_manual(values=mypalette) +  
+  theme_bw() +  
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  facet_grid(rows = vars(modelname)) +
+  xlab("Study Populations") +
+  ylab("FPR Rate")
+
+# bubble plot for cohrot size
+p.buble <-  ggplot(ext.val.fpr, 
+                   aes(x=modelname, y=nameStatus, size=n, fill=status)) +
+  geom_point(alpha=0.6, shape=21, color="black") +
+  scale_size(range = c(.1, 25), name="Diagnosis") +
+  scale_fill_manual(values=mypalette)+theme_bw()+
+  coord_flip()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+# combine plots
+figure3 <- ggarrange(p.bar, p.buble, ncol = 1, nrow = 2)
+
+ggsave(figure3, filename=paste0(PARAM$folder.results, "Figure3.pdf"),
+        width = 10, height=15)
+```
+
+###############################################################################
+Do age, gender or sequencing depth have an affect on prediction values
+###############################################################################
+
+```{r}
+library(car)
+library(gtools)
+# load predictions and combine all in one master file
+pred.meta.total <- data.frame()
+temp <- list.files(path=PARAM$folder.results, pattern="pred.0.90.*", include.dirs=T)
+for(temp in temp){
+  currentDF <- read.table(paste0(PARAM$folder.results, temp))
+  pred.meta.total <- smartbind(pred.meta.total, currentDF)
+}
+
+pred.meta.total$age_years=as.integer(pred.meta.total$age_years)
+class(pred.meta.total$read_count) <-"numeric"
+pred.meta.total$read_count=as.numeric(pred.meta.total$read_count)
+
+# use anove to see the effect size
+df=pred.meta.total[pred.meta.total$model=="model1",]
+df2=pred.meta.total[pred.meta.total$model=="model2",]
+
+# anova for naive model 1
+aov.m1t1 <- anova(lm(pred ~ study + age_years + gender + read_count + subject_disease_status, 
+                data=df)) %>% broom::tidy()
+
+aov.m1t2 <- Anova(lm(pred ~ study + subject_disease_status + read_count + age_years + gender, 
+                data=df), type=2) %>% broom::tidy()
+corr.age.m1=cor.test(df$pred, df$age_years, data = df, method ="spearman", 
+                     na.action = "na.omit")
+corr.read.m1=cor.test(df$pred, df$read_count, data = df, method ="spearman", 
+                      na.action = "na.omit")
+
+# anova for constrain-enriched model 2
+aov.m2t1 <- anova(lm(pred ~ study + age_years + gender + read_count + subject_disease_status, 
+                data=df2)) %>% broom::tidy()
+
+aov.m2t2 <- Anova(lm(pred ~ study + subject_disease_status + read_count + age_years + gender, 
+                data=df2), type=2) %>% broom::tidy()
+
+corr.age.m2=cor.test(df2$pred, df2$age_years, data = df2, method ="spearman", 
+                     na.action = "na.omit")
+corr.read.m2=cor.test(df2$pred, df2$read_count, data = df2, method ="spearman", 
+                      na.action = "na.omit")
+```
+
+```{r}
+# plot the distribution of age, gender and sequencing depth of all external cohorts
+mypalette=c("#d688c1","#a8b245","#1b90fb","#678743","#d89b37","#737782",
+"#cd5d40","#48b6a5","#d1416d","#54afd0","#d68337","#7f69ae")
+
+df$study <- paste0(df$study, " ", df$subject_disease_status)
+#organise Spanish data
+df$read_count[df$study=="Spanish CTR"]<- df$read_count.x[df$study=="Spanish CTR"]
+df$read_count[df$study=="Spanish PC"]<- df$read_count.x[df$study=="Spanish PC"]
+df$read_count[df$study=="Spanish Pancreatitis"]<- df$read_count.x[df$study=="Spanish Pancreatitis"]
+
+# plot the age
+p1 <- ggplot(data = df, aes(x=study, y=age_years)) + 
+  geom_point(aes(y=age_years) ) +
+  geom_boxplot(aes(fill = study)) + 
+  xlab("Study") + ylab("Age") +
+  theme_classic() +
+theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),legend.position = "none")
+
+# plot the sequencing depth
+p2 <- ggplot(data = df, aes(x=study, y=read_count)) + 
+  geom_point(aes(y=read_count) ) +
+  geom_boxplot(aes(fill = study)) + 
+  xlab("Study") + ylab("Sequencing Depth") +
+  theme_classic()+
+  scale_y_continuous(
+  breaks = c(50000000, 100000000,150000000,200000000),
+  label = c("50M", "100M", "150M", "200M"))+
+theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(), legend.position = "none")
+
+ # recode gender for all cohorts and extract summary
+df <- df %>%
+  mutate(gender=dplyr::recode(gender, 'male'="1",
+                              'female'="0",
+                              '0'="1",
+                              '1'="0", 
+                              'Male'="1",
+                              'Female'="0")) 
+df.gender <- df %>%
+  group_by(study, gender) %>% 
+  dplyr::summarize(count = n())
+# plot gender
+p3 <- ggplot(data = df.gender, aes(x=study, y=count, fill=gender)) + 
+  geom_bar(stat="identity",position=position_dodge()) +ylim(0, 300) +
+  xlab("Study") + ylab("Number of Individuals") +       
+  scale_fill_manual(values=mypalette) +
+  theme_classic() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 9),
+        legend.position ="bottom")
+
+# combine plots
+figure1 <- ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+# save the plot
+ggsave(figure1, filename=paste0(PARAM$folder.results, 
+                                "Supp.Fig.12.age_depth_external_validation.pdf"),
+         width = 6, height=12)
+```
+
+
+```{r ssave files}
+save(pred.meta.total, total, aov.m1t1, aov.m1t2, aov.m2t1, aov.m2t2,
+     file=paste0(PARAM$folder.Rdata, "pc.external.pred.master.file.RData"))
+```
+
+```{r session_info}
+sessionInfo()
+```
+
