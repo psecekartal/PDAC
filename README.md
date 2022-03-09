@@ -2,4 +2,5 @@ Pancreatic ductal adenocarcinoma (PDAC), the most frequent form of pancreatic ca
 
 The raw sequencing data for the samples are made available in the European Nucleotide Archive (ENA) under the study identifiers PRJEB38625 and PRJEB42013. Metadata for these samples are available as Supplementary Tables S1 and S2. Filtered taxonomic and functional profiles used as input for the statistical modelling pipeline are available in Supplementary Data S1 and S2. 
 
-A repository for pancreatic cancer microbiome-related work.
+A repository contains information for pancreatic cancer microbiome-related work.
+The related paper: https://gut.bmj.com/content/early/2022/01/26/gutjnl-2021-324755 
